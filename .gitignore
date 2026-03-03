@@ -1,0 +1,8 @@
+__pycache__/
+*.py[cod]
+
+.history/
+tests/
+
+config.ini
+*.html
