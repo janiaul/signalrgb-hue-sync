@@ -6,3 +6,4 @@ tests/
 
 config.ini
 *.html
+*.pem
