@@ -6,6 +6,9 @@ import subprocess
 import shutil
 import ssl
 import configparser
+import ctypes
+import ctypes.wintypes
+import functools
 
 import urllib3
 import requests
@@ -58,6 +61,7 @@ _connected_clients: set = set()
 _clients_lock = threading.Lock()
 _latest_colors: list = [{"r": 0, "g": 0, "b": 0}]
 _colors_lock = threading.Lock()
+_stream_interrupt = threading.Event()
 
 
 @sock.route("/ws")
@@ -287,31 +291,6 @@ def ensure_ca_in_cacert(cacert_path: Path, ca_cert_path: Path) -> None:
 
 
 # ==========================================
-# SIGNALRGB EFFECT RELOAD
-# ==========================================
-
-
-def reload_signalrgb_effect(effect_name: str) -> None:
-    """Trigger SignalRGB to reload a named effect via its protocol URL handler."""
-    from urllib.parse import quote
-
-    effect_url = quote(effect_name, safe="")
-    startupinfo = subprocess.STARTUPINFO()
-    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-    subprocess.Popen(
-        [
-            "cmd",
-            "/c",
-            f"start /min signalrgb://effect/apply/{effect_url}?-silentlaunch-",
-        ],
-        shell=True,
-        startupinfo=startupinfo,
-        creationflags=subprocess.CREATE_NO_WINDOW,
-    )
-    print(f"  -> Reloading '{effect_name}' in SignalRGB ...")
-
-
-# ==========================================
 # HTML
 # ==========================================
 
@@ -455,6 +434,7 @@ def hue_stream_thread(bridge_ip, api_key, watched_ids):
     backoff = 3
 
     while True:
+        _stream_interrupt.clear()
         try:
             print(f"Connecting to Hue bridge at {bridge_ip} ...")
             with requests.get(
@@ -465,6 +445,11 @@ def hue_stream_thread(bridge_ip, api_key, watched_ids):
                 print("Connected. Listening for Hue events ...")
                 buffer = []
                 for raw_line in resp.iter_lines(decode_unicode=True):
+                    # Check for wake-triggered interrupt
+                    if _stream_interrupt.is_set():
+                        print("  [hue] Stream interrupted by wake event.")
+                        resp.close()
+                        break
                     if raw_line.startswith("data:"):
                         buffer.append(raw_line[5:].strip())
                     elif raw_line == "" and buffer:
@@ -490,9 +475,120 @@ def hue_stream_thread(bridge_ip, api_key, watched_ids):
         except Exception:
             traceback.print_exc()
 
+        if _stream_interrupt.is_set():
+            backoff = 3
+            continue
+
         print(f"Reconnecting in {backoff}s ...")
         time.sleep(backoff)
         backoff = min(backoff * 2, 60)
+
+
+# ==========================================
+# SLEEP / WAKE HANDLING
+# ==========================================
+
+
+def sleep_wake_monitor(on_wake_callback):
+    """Listens for Windows sleep/wake events and calls on_wake_callback on resume."""
+    WM_POWERBROADCAST = 0x0218
+    PBT_APMRESUMEAUTOMATIC = 0x0012
+
+    user32 = ctypes.windll.user32
+    kernel32 = ctypes.windll.kernel32
+
+    # Use pointer-sized types so 64-bit WPARAM/LPARAM don't overflow
+    WNDPROC = ctypes.WINFUNCTYPE(
+        ctypes.c_ssize_t,  # return type (LRESULT)
+        ctypes.wintypes.HWND,
+        ctypes.c_uint,
+        ctypes.c_size_t,  # WPARAM  (unsigned pointer-sized)
+        ctypes.c_ssize_t,  # LPARAM  (signed pointer-sized)
+    )
+
+    class WNDCLASSW(ctypes.Structure):
+        _fields_ = [
+            ("style", ctypes.c_uint),
+            ("lpfnWndProc", WNDPROC),
+            ("cbClsExtra", ctypes.c_int),
+            ("cbWndExtra", ctypes.c_int),
+            ("hInstance", ctypes.wintypes.HINSTANCE),
+            ("hIcon", ctypes.wintypes.HICON),
+            ("hCursor", ctypes.wintypes.HANDLE),
+            ("hbrBackground", ctypes.wintypes.HBRUSH),
+            ("lpszMenuName", ctypes.wintypes.LPCWSTR),
+            ("lpszClassName", ctypes.wintypes.LPCWSTR),
+        ]
+
+    # Tell ctypes the correct signature for DefWindowProcW
+    user32.DefWindowProcW.restype = ctypes.c_ssize_t
+    user32.DefWindowProcW.argtypes = [
+        ctypes.wintypes.HWND,
+        ctypes.c_uint,
+        ctypes.c_size_t,
+        ctypes.c_ssize_t,
+    ]
+
+    def wnd_proc(hwnd, msg, wparam, lparam):
+        if msg == WM_POWERBROADCAST and wparam == PBT_APMRESUMEAUTOMATIC:
+            print("[power] Wake event detected — triggering reconnect ...")
+            on_wake_callback()
+        return user32.DefWindowProcW(hwnd, msg, wparam, lparam)
+
+    hinstance = kernel32.GetModuleHandleW(None)
+    class_name = "HueSyncPowerMonitor"
+
+    wc = WNDCLASSW()
+    wc.lpfnWndProc = WNDPROC(wnd_proc)
+    wc.hInstance = hinstance
+    wc.lpszClassName = class_name
+    user32.RegisterClassW(ctypes.byref(wc))
+
+    hwnd = user32.CreateWindowExW(
+        0,
+        class_name,
+        class_name,
+        0,
+        0,
+        0,
+        0,
+        0,
+        None,
+        None,
+        hinstance,
+        None,
+    )
+
+    msg = ctypes.wintypes.MSG()
+    while user32.GetMessageW(ctypes.byref(msg), hwnd, 0, 0) != 0:
+        user32.TranslateMessage(ctypes.byref(msg))
+        user32.DispatchMessageW(ctypes.byref(msg))
+
+
+def on_wake(bridge_ip, api_key, light_ids):
+    """Called on Windows wake: force SSE reconnect, then re-seed WS clients."""
+    global _latest_colors
+
+    _stream_interrupt.set()
+
+    print("[power] Waiting for network after wake ...")
+    deadline = time.monotonic() + 60
+    attempt = 0
+    while time.monotonic() < deadline:
+        time.sleep(2)
+        attempt += 1
+        try:
+            print(f"[power] Re-fetching light state (attempt {attempt}) ...")
+            fresh_colors = fetch_initial_colors(bridge_ip, api_key, light_ids)
+            with _colors_lock:
+                _latest_colors = fresh_colors
+            broadcast(json.dumps(fresh_colors, separators=(",", ":")))
+            print("[power] Colors re-seeded to WS clients.")
+            return
+        except Exception as exc:
+            print(f"[power] Not ready yet: {exc}")
+
+    print("[power] Giving up re-seeding after wake — stream reconnect will recover.")
 
 
 # ==========================================
@@ -537,14 +633,21 @@ def main():
     write_html(HUESYNC_HTML, wss_url)
     print(f"Effect file written: {HUESYNC_HTML}")
 
-    # reload_signalrgb_effect("Hue Sync")
-
     hue_thread = threading.Thread(
         target=hue_stream_thread,
         args=(BRIDGE_IP, APPLICATION_KEY, watched_ids),
         daemon=True,
     )
     hue_thread.start()
+
+    wake_cb = functools.partial(on_wake, BRIDGE_IP, APPLICATION_KEY, light_ids)
+
+    power_thread = threading.Thread(
+        target=sleep_wake_monitor,
+        args=(lambda: threading.Thread(target=wake_cb, daemon=True).start(),),
+        daemon=True,
+    )
+    power_thread.start()
 
     ssl_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     ssl_ctx.load_cert_chain(certfile=CERT_FILE, keyfile=KEY_FILE)
