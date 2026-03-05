@@ -1,7 +1,6 @@
 import json
 import logging
 import logging.handlers
-import traceback
 import threading
 import time
 import subprocess
@@ -11,6 +10,7 @@ import configparser
 import ctypes
 import ctypes.wintypes
 import functools
+from typing import Callable
 
 import urllib3
 import requests
@@ -21,17 +21,17 @@ from pathlib import Path
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ==========================================
+# TYPES
+# ==========================================
+
+Color = dict[str, int]  # {"r": int, "g": int, "b": int}
+
+# ==========================================
 # CONFIG
 # ==========================================
 
 BASE_DIR = Path(__file__).resolve().parent
 HUESYNC_HTML = BASE_DIR / "HueSync.html"
-
-target = HUESYNC_HTML
-link = Path.home() / "Documents" / "WhirlwindFX" / "Effects" / "HueSync.html"
-link.parent.mkdir(parents=True, exist_ok=True)
-if not link.exists():
-    link.symlink_to(target)
 
 FLASK_PORT = 5123
 
@@ -45,7 +45,7 @@ ENTERTAINMENT_ID = _config["hue"].get("entertainment_id", "")
 
 logger = logging.getLogger("huesync")
 logger.setLevel(logging.INFO)
-_formatter = logging.Formatter("%(asctime)s %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
+_formatter = logging.Formatter("%(asctime)s %(message)s", datefmt="%H:%M:%S")
 
 _stream_handler = logging.StreamHandler()
 _stream_handler.setFormatter(_formatter)
@@ -63,12 +63,6 @@ if _config["general"].getboolean("logging", fallback=False):
 
 CERT_FILE = BASE_DIR / "localhost+1.pem"
 KEY_FILE = BASE_DIR / "localhost+1-key.pem"
-MKCERT_CAROOT = Path(
-    subprocess.check_output(
-        ["mkcert", "-CAROOT"], text=True, creationflags=subprocess.CREATE_NO_WINDOW
-    ).strip()
-)
-MKCERT_CA_CERT = MKCERT_CAROOT / "rootCA.pem"
 
 # ==========================================
 # FLASK / WEBSOCKET
@@ -79,7 +73,7 @@ sock = Sock(app)
 
 _connected_clients: set = set()
 _clients_lock = threading.Lock()
-_latest_colors: list = [{"r": 0, "g": 0, "b": 0}]
+_latest_colors: list[Color] = [{"r": 0, "g": 0, "b": 0}]
 _colors_lock = threading.Lock()
 _stream_interrupt = threading.Event()
 
@@ -120,21 +114,22 @@ def broadcast(msg: str) -> None:
 # ==========================================
 
 
-def resolve_zone_id(bridge_ip, api_key, zone_name):
+def resolve_zone_id(bridge_ip: str, api_key: str, zone_name: str) -> str:
     """Find the entertainment zone ID matching the configured zone name."""
     url = f"https://{bridge_ip}/clip/v2/resource/entertainment_configuration"
     resp = requests.get(
         url, headers={"hue-application-key": api_key}, verify=False, timeout=5
     )
     resp.raise_for_status()
-    for zone in resp.json().get("data", []):
+    zones = resp.json().get("data", [])
+    for zone in zones:
         if zone.get("name", "").lower() == zone_name.lower():
             return zone["id"]
-    available = [z.get("name") for z in resp.json().get("data", [])]
+    available = [z.get("name") for z in zones]
     raise ValueError(f"Zone '{zone_name}' not found. Available: {available}")
 
 
-def resolve_light_ids_in_zone(bridge_ip, api_key, zone_id):
+def resolve_light_ids_in_zone(bridge_ip: str, api_key: str, zone_id: str) -> list[str]:
     """Walk the zone's channel/entertainment/device graph to collect all light resource IDs."""
     headers = {"hue-application-key": api_key}
     url = f"https://{bridge_ip}/clip/v2/resource/entertainment_configuration/{zone_id}"
@@ -169,7 +164,9 @@ def resolve_light_ids_in_zone(bridge_ip, api_key, zone_id):
     return light_rids
 
 
-def fetch_initial_colors(bridge_ip, api_key, light_ids):
+def fetch_initial_colors(
+    bridge_ip: str, api_key: str, light_ids: list[str]
+) -> list[Color]:
     """Fetch current color state of each light at startup; returns black if all lights are off."""
     headers = {"hue-application-key": api_key}
     colors = []
@@ -201,7 +198,7 @@ def fetch_initial_colors(bridge_ip, api_key, light_ids):
     return colors if colors else [{"r": 0, "g": 0, "b": 0}]
 
 
-def fetch_current_colors(bridge_ip, api_key, light_id):
+def fetch_current_colors(bridge_ip: str, api_key: str, light_id: str) -> list[Color]:
     """Fetch the current color of a single light; used when a toggle-on event carries no color."""
     headers = {"hue-application-key": api_key}
     url = f"https://{bridge_ip}/clip/v2/resource/light/{light_id}"
@@ -228,19 +225,19 @@ def fetch_current_colors(bridge_ip, api_key, light_id):
 # ==========================================
 
 
-def _clamp(v, lo=0.0, hi=1.0):
+def _clamp(v: float, lo: float = 0.0, hi: float = 1.0) -> float:
     """Clamp a value between lo and hi."""
     return max(lo, min(hi, v))
 
 
-def _srgb_gamma(linear):
+def _srgb_gamma(linear: float) -> float:
     """Apply sRGB gamma correction to a linear light value."""
     if linear <= 0.0031308:
         return 12.92 * linear
     return 1.055 * (linear ** (1.0 / 2.4)) - 0.055
 
 
-def xy_bri_to_rgb(x, y, bri=1.0):
+def xy_bri_to_rgb(x: float, y: float, bri: float = 1.0) -> tuple[int, int, int]:
     """Convert Hue CIE xy + brightness to an sRGB (r, g, b) tuple in 0-255 range."""
     if y == 0:
         return 0, 0, 0
@@ -382,7 +379,7 @@ def write_html(file_path: Path, wss_url: str) -> None:
 # ==========================================
 
 
-def extract_colors_from_event(data, watched_ids):
+def extract_colors_from_event(data: list, watched_ids: set) -> list[Color]:
     """
     Parse SSE event data into a list of RGB dicts for watched lights.
     Returns black on light-off; fetches current state from bridge on toggle-on with no color data.
@@ -447,7 +444,7 @@ def extract_colors_from_event(data, watched_ids):
 # ==========================================
 
 
-def hue_stream_thread(bridge_ip, api_key, watched_ids):
+def hue_stream_thread(bridge_ip: str, api_key: str, watched_ids: set) -> None:
     """Listen to the Hue bridge SSE event stream and broadcast color updates to WebSocket clients."""
     global _latest_colors
     url = f"https://{bridge_ip}/eventstream/clip/v2"
@@ -489,12 +486,14 @@ def hue_stream_thread(bridge_ip, api_key, watched_ids):
                                 )
                                 logger.info("Push -> %s", rgb_preview)
                                 broadcast(msg)
-                        except json.JSONDecodeError:
-                            pass
+                        except json.JSONDecodeError as exc:
+                            logger.warning(
+                                "[hue] Malformed SSE payload, skipping: %s", exc
+                            )
         except requests.RequestException as exc:
-            logger.info("Stream error: %s", exc)
+            logger.error("Stream error: %s", exc)
         except Exception:
-            traceback.print_exc()
+            logger.exception("Unhandled exception in hue stream thread")
 
         if _stream_interrupt.is_set():
             backoff = 3
@@ -510,7 +509,7 @@ def hue_stream_thread(bridge_ip, api_key, watched_ids):
 # ==========================================
 
 
-def sleep_wake_monitor(on_wake_callback):
+def sleep_wake_monitor(on_wake_callback: Callable[[], None]) -> None:
     """Listens for Windows sleep/wake events and calls on_wake_callback on resume."""
     WM_POWERBROADCAST = 0x0218
     PBT_APMRESUMEAUTOMATIC = 0x0012
@@ -586,7 +585,7 @@ def sleep_wake_monitor(on_wake_callback):
         user32.DispatchMessageW(ctypes.byref(msg))
 
 
-def on_wake(bridge_ip, api_key, light_ids):
+def on_wake(bridge_ip: str, api_key: str, light_ids: list[str]) -> None:
     """Called on Windows wake: force SSE reconnect, then re-seed WS clients."""
     global _latest_colors
 
@@ -607,7 +606,7 @@ def on_wake(bridge_ip, api_key, light_ids):
             logger.info("[power] Colors re-seeded to WS clients.")
             return
         except Exception as exc:
-            logger.info("[power] Not ready yet: %s", exc)
+            logger.warning("[power] Not ready yet: %s", exc)
 
     logger.info(
         "[power] Giving up re-seeding after wake — stream reconnect will recover."
@@ -622,6 +621,18 @@ def on_wake(bridge_ip, api_key, light_ids):
 def main():
     """Resolve zone/lights, patch SignalRGB cacert, seed initial color state, and start Flask over SSL."""
     global ENTERTAINMENT_ID, _latest_colors
+
+    link = Path.home() / "Documents" / "WhirlwindFX" / "Effects" / "HueSync.html"
+    link.parent.mkdir(parents=True, exist_ok=True)
+    if not link.exists():
+        link.symlink_to(HUESYNC_HTML)
+
+    mkcert_caroot = Path(
+        subprocess.check_output(
+            ["mkcert", "-CAROOT"], text=True, creationflags=subprocess.CREATE_NO_WINDOW
+        ).strip()
+    )
+    mkcert_ca_cert = mkcert_caroot / "rootCA.pem"
 
     if not ENTERTAINMENT_ID:
         logger.info("Resolving zone ID for '%s' ...", ENTERTAINMENT_ZONE_NAME)
@@ -646,7 +657,7 @@ def main():
     logger.info("Checking SignalRGB cacert.pem ...")
     cacert_path = find_signalrgb_cacert()
     if cacert_path and cacert_path.exists():
-        ensure_ca_in_cacert(cacert_path, MKCERT_CA_CERT)
+        ensure_ca_in_cacert(cacert_path, mkcert_ca_cert)
     else:
         logger.info(
             "SignalRGB not running or cacert.pem not found, skipping cacert patch."
