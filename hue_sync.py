@@ -45,7 +45,7 @@ ENTERTAINMENT_ID = _config["hue"].get("entertainment_id", "")
 
 logger = logging.getLogger("huesync")
 logger.setLevel(logging.INFO)
-_formatter = logging.Formatter("%(asctime)s %(message)s", datefmt="%H:%M:%S")
+_formatter = logging.Formatter("%(asctime)s %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
 
 _stream_handler = logging.StreamHandler()
 _stream_handler.setFormatter(_formatter)
