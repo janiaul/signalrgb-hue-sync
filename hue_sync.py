@@ -1,4 +1,6 @@
 import json
+import logging
+import logging.handlers
 import traceback
 import threading
 import time
@@ -41,6 +43,24 @@ APPLICATION_KEY = _config["hue"]["application_key"]
 ENTERTAINMENT_ZONE_NAME = _config["hue"]["entertainment_zone_name"]
 ENTERTAINMENT_ID = _config["hue"].get("entertainment_id", "")
 
+logger = logging.getLogger("huesync")
+logger.setLevel(logging.INFO)
+_formatter = logging.Formatter("%(asctime)s %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
+
+_stream_handler = logging.StreamHandler()
+_stream_handler.setFormatter(_formatter)
+logger.addHandler(_stream_handler)
+
+if _config["general"].getboolean("logging", fallback=False):
+    _file_handler = logging.handlers.RotatingFileHandler(
+        BASE_DIR / "huesync.log",
+        maxBytes=5 * 1024 * 1024,
+        backupCount=0,
+        encoding="utf-8",
+    )
+    _file_handler.setFormatter(_formatter)
+    logger.addHandler(_file_handler)
+
 CERT_FILE = BASE_DIR / "localhost+1.pem"
 KEY_FILE = BASE_DIR / "localhost+1-key.pem"
 MKCERT_CAROOT = Path(
@@ -69,7 +89,7 @@ def ws_handler(ws):
     """Accept a new WebSocket client, send the current color immediately, then keep alive."""
     with _clients_lock:
         _connected_clients.add(ws)
-    print(f"  [ws] Client connected ({len(_connected_clients)} total)")
+    logger.info("[ws] Client connected (%d total)", len(_connected_clients))
     try:
         with _colors_lock:
             ws.send(json.dumps(_latest_colors, separators=(",", ":")))
@@ -80,7 +100,7 @@ def ws_handler(ws):
     finally:
         with _clients_lock:
             _connected_clients.discard(ws)
-        print(f"  [ws] Client disconnected ({len(_connected_clients)} total)")
+        logger.info("[ws] Client disconnected (%d total)", len(_connected_clients))
 
 
 def broadcast(msg: str) -> None:
@@ -276,18 +296,18 @@ def ensure_ca_in_cacert(cacert_path: Path, ca_cert_path: Path) -> None:
     cacert_text = cacert_path.read_text(encoding="utf-8")
 
     if ca_cert_text.strip() in cacert_text:
-        print("  -> mkcert CA already in SignalRGB cacert.pem, skipping.")
+        logger.info("mkcert CA already in SignalRGB cacert.pem, skipping.")
         return
 
     bak_path = cacert_path.with_suffix(".pem.bak")
     if not bak_path.exists():
         shutil.copy2(cacert_path, bak_path)
-        print(f"  -> Backup created: {bak_path}")
+        logger.info("Backup created: %s", bak_path)
 
     with open(cacert_path, "a", encoding="utf-8") as f:
         f.write("\n")
         f.write(ca_cert_text)
-    print(f"  -> mkcert CA appended to {cacert_path}")
+    logger.info("mkcert CA appended to %s", cacert_path)
 
 
 # ==========================================
@@ -403,16 +423,17 @@ def extract_colors_from_event(data, watched_ids):
             if not has_color:
                 if "on" in on_state and on_state["on"]:
                     # Toggle-on with no color — fetch from bridge
-                    print(
-                        f"  [hue] Toggle-on with no color data, fetching state for {light_id} ..."
+                    logger.info(
+                        "[hue] Toggle-on with no color data, fetching state for %s",
+                        light_id,
                     )
                     colors.extend(
                         fetch_current_colors(BRIDGE_IP, APPLICATION_KEY, light_id)
                     )
                 elif "dimming" in item:
                     # Brightness-only event — fetch current colors from bridge at new brightness
-                    print(
-                        f"  [hue] Brightness change, fetching state for {light_id} ..."
+                    logger.info(
+                        "[hue] Brightness change, fetching state for %s", light_id
                     )
                     colors.extend(
                         fetch_current_colors(BRIDGE_IP, APPLICATION_KEY, light_id)
@@ -436,18 +457,18 @@ def hue_stream_thread(bridge_ip, api_key, watched_ids):
     while True:
         _stream_interrupt.clear()
         try:
-            print(f"Connecting to Hue bridge at {bridge_ip} ...")
+            logger.info("Connecting to Hue bridge at %s", bridge_ip)
             with requests.get(
                 url, headers=headers, stream=True, verify=False, timeout=None
             ) as resp:
                 resp.raise_for_status()
                 backoff = 3
-                print("Connected. Listening for Hue events ...")
+                logger.info("Connected. Listening for Hue events ...")
                 buffer = []
                 for raw_line in resp.iter_lines(decode_unicode=True):
                     # Check for wake-triggered interrupt
                     if _stream_interrupt.is_set():
-                        print("  [hue] Stream interrupted by wake event.")
+                        logger.info("[hue] Stream interrupted by wake event.")
                         resp.close()
                         break
                     if raw_line.startswith("data:"):
@@ -466,12 +487,12 @@ def hue_stream_thread(bridge_ip, api_key, watched_ids):
                                     f"rgb({c['r']},{c['g']},{c['b']})"
                                     for c in colors[:4]
                                 )
-                                print(f"  Push -> {rgb_preview}")
+                                logger.info("Push -> %s", rgb_preview)
                                 broadcast(msg)
                         except json.JSONDecodeError:
                             pass
         except requests.RequestException as exc:
-            print(f"Stream error: {exc}")
+            logger.info("Stream error: %s", exc)
         except Exception:
             traceback.print_exc()
 
@@ -479,7 +500,7 @@ def hue_stream_thread(bridge_ip, api_key, watched_ids):
             backoff = 3
             continue
 
-        print(f"Reconnecting in {backoff}s ...")
+        logger.info("Reconnecting in %ds ...", backoff)
         time.sleep(backoff)
         backoff = min(backoff * 2, 60)
 
@@ -531,7 +552,7 @@ def sleep_wake_monitor(on_wake_callback):
 
     def wnd_proc(hwnd, msg, wparam, lparam):
         if msg == WM_POWERBROADCAST and wparam == PBT_APMRESUMEAUTOMATIC:
-            print("[power] Wake event detected — triggering reconnect ...")
+            logger.info("[power] Wake event detected — triggering reconnect ...")
             on_wake_callback()
         return user32.DefWindowProcW(hwnd, msg, wparam, lparam)
 
@@ -571,24 +592,26 @@ def on_wake(bridge_ip, api_key, light_ids):
 
     _stream_interrupt.set()
 
-    print("[power] Waiting for network after wake ...")
+    logger.info("[power] Waiting for network after wake ...")
     deadline = time.monotonic() + 60
     attempt = 0
     while time.monotonic() < deadline:
         time.sleep(2)
         attempt += 1
         try:
-            print(f"[power] Re-fetching light state (attempt {attempt}) ...")
+            logger.info("[power] Re-fetching light state (attempt %d) ...", attempt)
             fresh_colors = fetch_initial_colors(bridge_ip, api_key, light_ids)
             with _colors_lock:
                 _latest_colors = fresh_colors
             broadcast(json.dumps(fresh_colors, separators=(",", ":")))
-            print("[power] Colors re-seeded to WS clients.")
+            logger.info("[power] Colors re-seeded to WS clients.")
             return
         except Exception as exc:
-            print(f"[power] Not ready yet: {exc}")
+            logger.info("[power] Not ready yet: %s", exc)
 
-    print("[power] Giving up re-seeding after wake — stream reconnect will recover.")
+    logger.info(
+        "[power] Giving up re-seeding after wake — stream reconnect will recover."
+    )
 
 
 # ==========================================
@@ -601,37 +624,37 @@ def main():
     global ENTERTAINMENT_ID, _latest_colors
 
     if not ENTERTAINMENT_ID:
-        print(f"Resolving zone ID for '{ENTERTAINMENT_ZONE_NAME}' ...")
+        logger.info("Resolving zone ID for '%s' ...", ENTERTAINMENT_ZONE_NAME)
         ENTERTAINMENT_ID = resolve_zone_id(
             BRIDGE_IP, APPLICATION_KEY, ENTERTAINMENT_ZONE_NAME
         )
-        print(f"  -> Zone ID: {ENTERTAINMENT_ID}")
+        logger.info("Zone ID: %s", ENTERTAINMENT_ID)
 
-    print("Fetching light IDs in zone ...")
+    logger.info("Fetching light IDs in zone ...")
     light_ids = resolve_light_ids_in_zone(BRIDGE_IP, APPLICATION_KEY, ENTERTAINMENT_ID)
-    print(f"  -> Watching {len(light_ids)} light(s): {light_ids}")
+    logger.info("Watching %d light(s): %s", len(light_ids), light_ids)
     watched_ids = set(light_ids)
 
-    print("Fetching initial light state ...")
+    logger.info("Fetching initial light state ...")
     with _colors_lock:
         _latest_colors = fetch_initial_colors(BRIDGE_IP, APPLICATION_KEY, light_ids)
     rgb_preview = ", ".join(
         f"rgb({c['r']},{c['g']},{c['b']})" for c in _latest_colors[:4]
     )
-    print(f"  -> Initial colors: {rgb_preview}")
+    logger.info("Initial colors: %s", rgb_preview)
 
-    print("Checking SignalRGB cacert.pem ...")
+    logger.info("Checking SignalRGB cacert.pem ...")
     cacert_path = find_signalrgb_cacert()
     if cacert_path and cacert_path.exists():
         ensure_ca_in_cacert(cacert_path, MKCERT_CA_CERT)
     else:
-        print(
-            "  -> SignalRGB not running or cacert.pem not found, skipping cacert patch."
+        logger.info(
+            "SignalRGB not running or cacert.pem not found, skipping cacert patch."
         )
 
     wss_url = "wss://127.0.0.1:5123/ws"
     write_html(HUESYNC_HTML, wss_url)
-    print(f"Effect file written: {HUESYNC_HTML}")
+    logger.info("Effect file written: %s", HUESYNC_HTML)
 
     hue_thread = threading.Thread(
         target=hue_stream_thread,

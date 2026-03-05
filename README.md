@@ -41,6 +41,9 @@ This produces `localhost+1.pem` and `localhost+1-key.pem`. Place both in the sam
 ### 3. Create a `config.ini`
 
 ```ini
+[general]
+logging = false
+
 [hue]
 bridge_ip = 192.168.x.x
 application_key = your-hue-app-key
