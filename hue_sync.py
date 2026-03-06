@@ -268,14 +268,32 @@ def xy_bri_to_rgb(x: float, y: float, bri: float = 1.0) -> tuple[int, int, int]:
 
 
 # ==========================================
-# SIGNALRGB CACERT PATCHING
+# SIGNALRGB
 # ==========================================
+
+_SIGNAL_MAIN_PROCESS = "SignalRgb.exe"
+_SIGNAL_LAUNCHER = (
+    Path.home() / "AppData" / "Local" / "VortxEngine" / "SignalRgbLauncher.exe"
+)
+
+# Windows MessageBox constants
+_MB_YESNO = 0x00000004
+_MB_ICONQUESTION = 0x00000020
+_MB_SETFOREGROUND = 0x00010000
+_IDYES = 6
 
 
 def find_signalrgb_cacert() -> Path | None:
     """Find cacert.pem by locating the running SignalRgb.exe process."""
     result = subprocess.run(
-        ["wmic", "process", "where", "name='SignalRgb.exe'", "get", "ExecutablePath"],
+        [
+            "wmic",
+            "process",
+            "where",
+            f"name='{_SIGNAL_MAIN_PROCESS}'",
+            "get",
+            "ExecutablePath",
+        ],
         capture_output=True,
         text=True,
         creationflags=subprocess.CREATE_NO_WINDOW,
@@ -287,24 +305,105 @@ def find_signalrgb_cacert() -> Path | None:
     return None
 
 
-def ensure_ca_in_cacert(cacert_path: Path, ca_cert_path: Path) -> None:
-    """Append mkcert's CA to SignalRGB's cacert.pem if not already present; backs up first."""
+def ensure_ca_in_cacert(cacert_path: Path, ca_cert_path: Path) -> bool:
+    """Append mkcert's CA to SignalRGB's cacert.pem if not already present; backs up first.
+
+    Returns:
+        True  - cert was appended (SignalRGB needs a restart to pick it up).
+        False - cert was already present, no changes made.
+    """
     ca_cert_text = ca_cert_path.read_text(encoding="utf-8")
     cacert_text = cacert_path.read_text(encoding="utf-8")
 
     if ca_cert_text.strip() in cacert_text:
-        logger.info("mkcert CA already in SignalRGB cacert.pem, skipping.")
-        return
+        logger.info("[signalrgb] mkcert CA already in cacert.pem, skipping.")
+        return False
 
     bak_path = cacert_path.with_suffix(".pem.bak")
     if not bak_path.exists():
         shutil.copy2(cacert_path, bak_path)
-        logger.info("Backup created: %s", bak_path)
+        logger.info("[signalrgb] Backup created: %s", bak_path)
 
     with open(cacert_path, "a", encoding="utf-8") as f:
         f.write("\n")
         f.write(ca_cert_text)
-    logger.info("mkcert CA appended to %s", cacert_path)
+    logger.info("[signalrgb] mkcert CA appended to %s", cacert_path)
+    return True
+
+
+def _prompt_signalrgb_restart() -> bool:
+    """Show a system-modal Yes/No dialog asking the user to restart SignalRGB.
+
+    Returns:
+        True if the user chose Yes, False otherwise.
+    """
+    result = ctypes.windll.user32.MessageBoxW(
+        0,
+        "The certificate store was updated and SignalRGB needs to restart.\n\nRestart now?",
+        "HueSync - Restart SignalRGB",
+        _MB_YESNO | _MB_ICONQUESTION | _MB_SETFOREGROUND,
+    )
+    return result == _IDYES
+
+
+def _restart_signalrgb() -> None:
+    """Terminate all SignalRGB processes and relaunch the launcher.
+
+    Waits up to 10 s for all processes to exit before relaunching so that the
+    launcher does not immediately collide with a lingering service process.
+    """
+    logger.info("[signalrgb] Stopping %s ...", _SIGNAL_MAIN_PROCESS)
+    subprocess.call(
+        ["taskkill", "/F", "/IM", _SIGNAL_MAIN_PROCESS],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        creationflags=subprocess.CREATE_NO_WINDOW,
+    )
+
+    # Poll until the process is gone or we hit the deadline
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        result = subprocess.run(
+            ["tasklist", "/FI", f"IMAGENAME eq {_SIGNAL_MAIN_PROCESS}", "/NH"],
+            capture_output=True,
+            text=True,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+        if _SIGNAL_MAIN_PROCESS not in result.stdout:
+            break
+        time.sleep(0.5)
+
+    if not _SIGNAL_LAUNCHER.exists():
+        logger.error(
+            "[signalrgb] Launcher not found at %s — cannot relaunch.", _SIGNAL_LAUNCHER
+        )
+        return
+
+    logger.info("[signalrgb] Launching %s ...", _SIGNAL_LAUNCHER)
+    subprocess.Popen(
+        [str(_SIGNAL_LAUNCHER)],
+        creationflags=subprocess.CREATE_NO_WINDOW,
+    )
+    logger.info("[signalrgb] Relaunch issued.")
+
+
+def patch_signalrgb_cacert(cacert_path: Path, ca_cert_path: Path) -> None:
+    """Patch SignalRGB's cacert.pem and, if patched, prompt the user to restart."""
+    patched = ensure_ca_in_cacert(cacert_path, ca_cert_path)
+    if not patched:
+        return
+
+    if _prompt_signalrgb_restart():
+        _restart_signalrgb()
+        # Give SignalRGB time to initialise its HTTP/WebSocket stack before
+        # the rest of main() continues (e.g. writing the effect HTML).
+        logger.info("[signalrgb] Waiting for SignalRGB to initialise ...")
+        time.sleep(6)
+    else:
+        logger.info(
+            "[signalrgb] User chose not to restart — "
+            "Hue Sync effect may not work until SignalRGB is restarted manually."
+        )
 
 
 # ==========================================
@@ -654,13 +753,13 @@ def main():
     )
     logger.info("Initial colors: %s", rgb_preview)
 
-    logger.info("Checking SignalRGB cacert.pem ...")
+    logger.info("[signalrgb] Checking cacert.pem ...")
     cacert_path = find_signalrgb_cacert()
     if cacert_path and cacert_path.exists():
-        ensure_ca_in_cacert(cacert_path, mkcert_ca_cert)
+        patch_signalrgb_cacert(cacert_path, mkcert_ca_cert)
     else:
         logger.info(
-            "SignalRGB not running or cacert.pem not found, skipping cacert patch."
+            "[signalrgb] Not running or cacert.pem not found, skipping cacert patch."
         )
 
     wss_url = "wss://127.0.0.1:5123/ws"
