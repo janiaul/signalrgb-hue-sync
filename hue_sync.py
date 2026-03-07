@@ -4,7 +4,6 @@ import logging.handlers
 import threading
 import time
 import subprocess
-import shutil
 import ssl
 import configparser
 import ctypes
@@ -321,22 +320,16 @@ def ensure_ca_in_cacert(cacert_path: Path, ca_cert_path: Path) -> bool:
 
     bak_path = cacert_path.with_suffix(".pem.bak")
     if not bak_path.exists():
-        shutil.copy2(cacert_path, bak_path)
+        bak_path.write_bytes(cacert_path.read_bytes())
         logger.info("[signalrgb] Backup created: %s", bak_path)
 
-    with open(cacert_path, "a", encoding="utf-8") as f:
-        f.write("\n")
-        f.write(ca_cert_text)
+    cacert_path.write_text(cacert_text + "\n" + ca_cert_text, encoding="utf-8")
     logger.info("[signalrgb] mkcert CA appended to %s", cacert_path)
     return True
 
 
 def _prompt_signalrgb_restart() -> bool:
-    """Show a system-modal Yes/No dialog asking the user to restart SignalRGB.
-
-    Returns:
-        True if the user chose Yes, False otherwise.
-    """
+    """Terminate SignalRgb.exe and relaunch it via the launcher."""
     result = ctypes.windll.user32.MessageBoxW(
         0,
         "The certificate store was updated and SignalRGB needs to restart.\n\nRestart now?",
