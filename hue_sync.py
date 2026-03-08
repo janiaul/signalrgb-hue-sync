@@ -548,7 +548,14 @@ def hue_stream_thread(bridge_ip: str, api_key: str, watched_ids: set) -> None:
         try:
             logger.info("Connecting to Hue bridge at %s", bridge_ip)
             with requests.get(
-                url, headers=headers, stream=True, verify=False, timeout=None
+                url,
+                headers=headers,
+                stream=True,
+                verify=False,
+                timeout=(
+                    10,
+                    None,
+                ),  # 10s connect timeout; no read timeout (bridge may be idle for hours)
             ) as resp:
                 resp.raise_for_status()
                 backoff = 3
@@ -686,23 +693,31 @@ def on_wake(bridge_ip: str, api_key: str, light_ids: list[str]) -> None:
     logger.info("[power] Waiting for network after wake ...")
     deadline = time.monotonic() + 60
     attempt = 0
-    while time.monotonic() < deadline:
-        time.sleep(2)
-        attempt += 1
-        try:
-            logger.info("[power] Re-fetching light state (attempt %d) ...", attempt)
-            fresh_colors = fetch_initial_colors(bridge_ip, api_key, light_ids)
-            with _colors_lock:
-                _latest_colors = fresh_colors
-            broadcast(json.dumps(fresh_colors, separators=(",", ":")))
-            logger.info("[power] Colors re-seeded to WS clients.")
-            return
-        except Exception as exc:
-            logger.warning("[power] Not ready yet: %s", exc)
+    try:
+        while time.monotonic() < deadline:
+            time.sleep(2)
+            attempt += 1
+            try:
+                logger.info("[power] Re-fetching light state (attempt %d) ...", attempt)
+                fresh_colors = fetch_initial_colors(bridge_ip, api_key, light_ids)
+                with _colors_lock:
+                    _latest_colors = fresh_colors
+                broadcast(json.dumps(fresh_colors, separators=(",", ":")))
+                logger.info("[power] Colors re-seeded to WS clients.")
+                # Give the stream thread time to break out and reconnect before
+                # the interrupt flag is cleared in the finally block.
+                time.sleep(2)
+                return
+            except Exception as exc:
+                logger.warning("[power] Not ready yet: %s", exc)
 
-    logger.info(
-        "[power] Giving up re-seeding after wake — stream reconnect will recover."
-    )
+        logger.info(
+            "[power] Giving up re-seeding after wake — stream reconnect will recover."
+        )
+    finally:
+        # Always clear the interrupt so the stream thread is free to reconnect,
+        # regardless of whether re-seeding succeeded or timed out.
+        _stream_interrupt.clear()
 
 
 # ==========================================
