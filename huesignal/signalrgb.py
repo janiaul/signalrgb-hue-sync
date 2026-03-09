@@ -12,7 +12,7 @@ from pathlib import Path
 from .config import (
     ASSETS_DIR,
     EFFECTS_DIR,
-    HUESYNC_HTML,
+    HUESIGNAL_HTML,
     SIGNALRGB_EFFECTS_DIR,
     WSS_URL,
 )
@@ -43,7 +43,7 @@ def write_effect_html(wss_url: str = WSS_URL) -> None:
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Hue Sync</title>
+  <title>Hue Signal</title>
   <style>html,body{{margin:0;padding:0;overflow:hidden}}</style>
 </head>
 <body>
@@ -97,8 +97,8 @@ def write_effect_html(wss_url: str = WSS_URL) -> None:
 </html>
 """
     EFFECTS_DIR.mkdir(parents=True, exist_ok=True)
-    HUESYNC_HTML.write_text(html, encoding="utf-8")
-    logger.info("[signalrgb] Effect HTML written → %s", HUESYNC_HTML)
+    HUESIGNAL_HTML.write_text(html, encoding="utf-8")
+    logger.info("[signalrgb] Effect HTML written → %s", HUESIGNAL_HTML)
 
 
 def ensure_effects_symlink() -> None:
@@ -107,7 +107,7 @@ def ensure_effects_symlink() -> None:
     link.parent.mkdir(parents=True, exist_ok=True)
     if not link.exists():
         try:
-            link.symlink_to(HUESYNC_HTML)
+            link.symlink_to(HUESIGNAL_HTML)
             logger.info("[signalrgb] Symlink created → %s", link)
         except OSError as exc:
             logger.warning("[signalrgb] Could not create symlink: %s", exc)
@@ -183,7 +183,7 @@ def patch_cacert(cacert_path: Path, mkcert_ca_path: Path) -> None:
         time.sleep(6)
     else:
         logger.warning(
-            "[signalrgb] Skipped restart — Hue Sync effect may not work until "
+            "[signalrgb] Skipped restart — Hue Signal effect may not work until "
             "SignalRGB is restarted manually."
         )
 

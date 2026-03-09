@@ -16,7 +16,7 @@ LOGS_DIR = BASE_DIR / "logs"
 EFFECTS_DIR = BASE_DIR / "effects"
 ASSETS_DIR = BASE_DIR / "assets"
 
-HUESYNC_HTML = EFFECTS_DIR / "HueSignal.html"
+HUESIGNAL_HTML = EFFECTS_DIR / "HueSignal.html"
 CERT_FILE = CERTS_DIR / "localhost+1.pem"
 KEY_FILE = CERTS_DIR / "localhost+1-key.pem"
 CONFIG_FILE = BASE_DIR / "config.ini"
