@@ -6,7 +6,7 @@ certs/*
 logs/*
 !logs/.gitkeep
 
-effects/HueSync.html
+effects/HueSignal.html
 
 assets/*
 !assets/.gitkeep
