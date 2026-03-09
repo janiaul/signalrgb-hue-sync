@@ -182,7 +182,6 @@ class TrayIcon:
 
     def _handle_restart(self, icon: pystray.Icon, item: pystray.MenuItem) -> None:
         logger.info("[tray] Restart stream requested.")
-        self.set_status(StreamStatus.CONNECTING)
         threading.Thread(target=self._on_restart_stream, daemon=True).start()
 
     def _handle_open_log(self, icon: pystray.Icon, item: pystray.MenuItem) -> None:

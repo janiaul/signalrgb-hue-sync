@@ -197,8 +197,14 @@ class HueStreamThread(threading.Thread):
     """Background thread that subscribes to the Hue SSE stream and calls
     *on_colors* whenever new color data arrives.
 
-    Optionally calls *on_status* with a string ("connecting", "connected",
-    "reconnecting") so the tray icon can reflect the current state.
+    Uses requests for SSE streaming with an infinite read timeout. The Hue
+    bridge sends no keepalives — it only writes on light state changes — so
+    the stream may be idle indefinitely. interrupt() sets a flag that is
+    checked each time iter_lines() yields; restart latency is bounded by
+    how long until the next bridge event.
+
+    Optionally calls *on_status* with a string token so the tray icon can
+    reflect the current connection state.
     """
 
     def __init__(
@@ -207,12 +213,18 @@ class HueStreamThread(threading.Thread):
         on_colors: Callable[[list[Color]], None],
         interrupt: threading.Event,
         on_status: Optional[Callable[[str], None]] = None,
+        on_reseed: Optional[Callable[[], None]] = None,
     ) -> None:
         super().__init__(name="hue-stream", daemon=True)
         self._cfg = cfg
         self._on_colors = on_colors
         self._interrupt = interrupt
         self._on_status = on_status or (lambda _: None)
+        self._on_reseed = on_reseed or (lambda: None)
+
+    def interrupt(self) -> None:
+        """Signal the stream to reconnect at the next bridge event."""
+        self._interrupt.set()
 
     def run(self) -> None:
         cfg = self._cfg
@@ -236,12 +248,12 @@ class HueStreamThread(threading.Thread):
                     backoff = _BACKOFF_INITIAL
                     self._on_status("connected")
                     logger.info("[hue] Connected. Listening for events ...")
+                    self._on_reseed()
 
                     buffer: list[str] = []
                     for raw_line in resp.iter_lines(decode_unicode=True):
                         if self._interrupt.is_set():
                             logger.info("[hue] Stream interrupted — reconnecting.")
-                            resp.close()
                             break
                         if raw_line.startswith("data:"):
                             buffer.append(raw_line[5:].strip())
@@ -264,6 +276,8 @@ class HueStreamThread(threading.Thread):
             backoff = min(backoff * 2, _BACKOFF_MAX)
 
     def _dispatch(self, payload: str, cfg: AppConfig) -> None:
+        if self._interrupt.is_set():
+            return  # restart in progress — discard stale events
         watched = set(cfg.resolved_light_ids)
         try:
             events = json.loads(payload)

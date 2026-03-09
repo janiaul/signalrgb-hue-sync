@@ -47,6 +47,7 @@ class HueSyncApp:
         self._cfg: AppConfig | None = None
         self._server: ColorServer | None = None
         self._tray: TrayIcon | None = None
+        self._stream: HueStreamThread | None = None
         self._stream_interrupt = threading.Event()
         self._shutdown_event = threading.Event()
 
@@ -111,8 +112,10 @@ class HueSyncApp:
             on_colors=self._on_colors,
             interrupt=self._stream_interrupt,
             on_status=self._on_stream_status,
+            on_reseed=self._reseed_colors,
         )
         stream.start()
+        self._stream = stream
 
         # 10. Power monitor thread
         wake_handler = make_wake_handler(
@@ -172,10 +175,35 @@ class HueSyncApp:
         if status:
             self._tray.set_status(status)
 
+    def _reseed_colors(self) -> None:
+        """Fetch current light state from bridge and push to all clients."""
+        if self._cfg is None or self._server is None:
+            return
+        try:
+            colors = fetch_initial_colors(self._cfg)
+            self._server.push_colors(colors)
+            logger.info("[app] Colors re-seeded.")
+        except Exception as exc:
+            logger.warning("[app] Could not re-seed colors: %s", exc)
+
     def _restart_stream(self) -> None:
-        """Interrupt the SSE stream so it immediately reconnects."""
+        """Interrupt the SSE stream and immediately re-seed clients with current light state."""
         logger.info("[app] Stream restart requested.")
-        self._stream_interrupt.set()
+        if self._tray is not None:
+            self._tray.set_status(StreamStatus.CONNECTING)
+        if self._stream is not None:
+            self._stream.interrupt()
+        if self._cfg is not None and self._server is not None:
+            try:
+                colors = fetch_initial_colors(self._cfg)
+                self._server.push_colors(colors)
+                logger.info("[app] Colors re-seeded after restart.")
+                if self._tray is not None:
+                    self._tray.set_status(StreamStatus.CONNECTED)
+            except Exception as exc:
+                logger.warning("[app] Could not re-seed colors after restart: %s", exc)
+                if self._tray is not None:
+                    self._tray.set_status(StreamStatus.RECONNECTING)
 
     def _shutdown(self) -> None:
         """Set the shutdown event, unblocking the main thread's Event.wait()."""
