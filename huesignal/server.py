@@ -17,7 +17,7 @@ from flask_sock import Sock
 from .color import Color, BLACK
 from .config import AppConfig, CERT_FILE, KEY_FILE, FLASK_PORT
 
-logger = logging.getLogger("huesync")
+logger = logging.getLogger("huesignal")
 
 
 class ColorServer:

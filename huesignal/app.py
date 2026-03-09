@@ -1,4 +1,4 @@
-"""HueSyncApp — owns the full application lifecycle.
+"""HueSignalApp — owns the full application lifecycle.
 
 Startup sequence
 ----------------
@@ -35,14 +35,14 @@ from .server import ColorServer
 from .signalrgb import setup_signalrgb
 from .tray import TrayIcon, STATUS_MAP, StreamStatus
 
-logger = logging.getLogger("huesync")
+logger = logging.getLogger("huesignal")
 
 
 class StartupError(Exception):
     """Raised (and displayed to the user) when a fatal startup step fails."""
 
 
-class HueSyncApp:
+class HueSignalApp:
     def __init__(self) -> None:
         self._cfg: AppConfig | None = None
         self._server: ColorServer | None = None
@@ -71,7 +71,7 @@ class HueSyncApp:
         cfg = self._load_config()
         setup_logging(cfg)
         logger.info("=" * 60)
-        logger.info("HueSync starting up")
+        logger.info("HueSignal starting up")
         logger.info("=" * 60)
 
         # 2. mkcert CA
@@ -306,7 +306,7 @@ def _fatal(message: str) -> None:
     try:
         root = tk.Tk()
         root.withdraw()
-        tkmb.showerror("HueSync — Fatal Error", message)
+        tkmb.showerror("HueSignal — Fatal Error", message)
         root.destroy()
     except Exception:
         pass

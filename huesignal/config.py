@@ -8,7 +8,7 @@ import logging.handlers
 from dataclasses import dataclass, field
 from pathlib import Path
 
-logger = logging.getLogger("huesync")
+logger = logging.getLogger("huesignal")
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 CERTS_DIR = BASE_DIR / "certs"
@@ -16,7 +16,7 @@ LOGS_DIR = BASE_DIR / "logs"
 EFFECTS_DIR = BASE_DIR / "effects"
 ASSETS_DIR = BASE_DIR / "assets"
 
-HUESYNC_HTML = EFFECTS_DIR / "HueSync.html"
+HUESYNC_HTML = EFFECTS_DIR / "HueSignal.html"
 CERT_FILE = CERTS_DIR / "localhost+1.pem"
 KEY_FILE = CERTS_DIR / "localhost+1-key.pem"
 CONFIG_FILE = BASE_DIR / "config.ini"
@@ -90,7 +90,7 @@ class AppConfig:
 
 
 def setup_logging(cfg: AppConfig) -> None:
-    """Configure the root huesync logger based on AppConfig."""
+    """Configure the root huesignal logger based on AppConfig."""
     logger.setLevel(logging.DEBUG)
     fmt = logging.Formatter("%(asctime)s %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
 
@@ -101,7 +101,7 @@ def setup_logging(cfg: AppConfig) -> None:
 
     if cfg.logging_enabled:
         LOGS_DIR.mkdir(parents=True, exist_ok=True)
-        log_file = LOGS_DIR / "huesync.log"
+        log_file = LOGS_DIR / "huesignal.log"
         fh = logging.handlers.RotatingFileHandler(
             log_file,
             maxBytes=5 * 1024 * 1024,

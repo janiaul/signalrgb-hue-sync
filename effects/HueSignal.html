@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Hue Sync</title>
+  <style>html,body{margin:0;padding:0;overflow:hidden}</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+(function () {
+  const canvas = document.getElementById("c");
+  const ctx    = canvas.getContext("2d");
+  let colors   = [{r:0,g:0,b:0}];
+
+  function resize() {
+    canvas.width  = window.innerWidth  || 320;
+    canvas.height = window.innerHeight || 200;
+    draw();
+  }
+
+  function draw() {
+    const W = canvas.width, H = canvas.height;
+    ctx.clearRect(0, 0, W, H);
+    if (colors.length === 1) {
+      ctx.fillStyle = `rgb(${colors[0].r},${colors[0].g},${colors[0].b})`;
+      ctx.fillRect(0, 0, W, H);
+      return;
+    }
+    const grad = ctx.createLinearGradient(0, 0, W, 0);
+    colors.forEach((c, i) => {
+      grad.addColorStop(i / (colors.length - 1), `rgb(${c.r},${c.g},${c.b})`);
+    });
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, W, H);
+  }
+
+  function connect() {
+    const ws = new WebSocket("wss://127.0.0.1:5123/ws");
+    ws.onmessage = (e) => {
+      try {
+        colors = JSON.parse(e.data);
+        draw();
+      } catch(_) {}
+    };
+    ws.onclose = () => setTimeout(connect, 2000);
+    ws.onerror = () => ws.close();
+  }
+
+  window.addEventListener("resize", resize);
+  resize();
+  connect();
+})();
+</script>
+</body>
+</html>

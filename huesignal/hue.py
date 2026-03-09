@@ -16,7 +16,7 @@ from .config import AppConfig
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-logger = logging.getLogger("huesync")
+logger = logging.getLogger("huesignal")
 
 # How long to wait between SSE reconnect attempts (doubles each failure, caps at 60s)
 _BACKOFF_INITIAL = 3

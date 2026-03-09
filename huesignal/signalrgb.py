@@ -17,7 +17,7 @@ from .config import (
     WSS_URL,
 )
 
-logger = logging.getLogger("huesync")
+logger = logging.getLogger("huesignal")
 
 _SIGNAL_MAIN_PROCESS = "SignalRgb.exe"
 _SIGNAL_LAUNCHER = (
@@ -102,8 +102,8 @@ def write_effect_html(wss_url: str = WSS_URL) -> None:
 
 
 def ensure_effects_symlink() -> None:
-    """Create a symlink in the SignalRGB effects directory pointing to HueSync.html."""
-    link = SIGNALRGB_EFFECTS_DIR / "HueSync.html"
+    """Create a symlink in the SignalRGB effects directory pointing to HueSignal.html."""
+    link = SIGNALRGB_EFFECTS_DIR / "HueSignal.html"
     link.parent.mkdir(parents=True, exist_ok=True)
     if not link.exists():
         try:
@@ -211,7 +211,7 @@ def _prompt_restart() -> bool:
     result = ctypes.windll.user32.MessageBoxW(
         0,
         "The certificate store was updated and SignalRGB needs to restart.\n\nRestart now?",
-        "HueSync — Restart SignalRGB",
+        "HueSignal — Restart SignalRGB",
         _MB_YESNO | _MB_ICONQUESTION | _MB_SETFOREGROUND,
     )
     return result == _IDYES

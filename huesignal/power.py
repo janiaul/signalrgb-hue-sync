@@ -12,7 +12,7 @@ from typing import Callable
 from .color import Color
 from .config import AppConfig
 
-logger = logging.getLogger("huesync")
+logger = logging.getLogger("huesignal")
 
 WM_POWERBROADCAST = 0x0218
 PBT_APMRESUMEAUTOMATIC = 0x0012
@@ -71,7 +71,7 @@ class PowerMonitor(threading.Thread):
             return user32.DefWindowProcW(hwnd, msg, wparam, lparam)
 
         hinstance = kernel32.GetModuleHandleW(None)
-        class_name = "HueSyncPowerMonitor"
+        class_name = "HueSignalPowerMonitor"
 
         wc = WNDCLASSW()
         wc.lpfnWndProc = WNDPROC(wnd_proc)

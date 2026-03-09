@@ -26,7 +26,7 @@ from PIL import Image, ImageDraw, ImageFont
 from .color import Color
 from .config import ASSETS_DIR, CONFIG_FILE, LOGS_DIR, TRAY_ICON
 
-logger = logging.getLogger("huesync")
+logger = logging.getLogger("huesignal")
 
 _ICON_SIZE = 64
 _DOT_RADIUS = 10
@@ -85,7 +85,7 @@ class TrayIcon:
         self._base_image = self._load_base_image()
 
         self._icon = pystray.Icon(
-            name="HueSync",
+            name="HueSignal",
             icon=self._render_icon(StreamStatus.STARTING),
             title=self._make_tooltip(StreamStatus.STARTING),
             menu=self._build_menu(),
@@ -156,7 +156,7 @@ class TrayIcon:
 
     @staticmethod
     def _make_tooltip(status: StreamStatus) -> str:
-        return f"HueSync — {_STATUS_LABELS[status]}"
+        return f"HueSignal — {_STATUS_LABELS[status]}"
 
     # ------------------------------------------------------------------
     # Menu  (dynamic items avoid full rebuild on every color update)
@@ -237,7 +237,7 @@ class TrayIcon:
         threading.Thread(target=self._on_restart_stream, daemon=True).start()
 
     def _handle_open_log(self, icon: pystray.Icon, item: pystray.MenuItem) -> None:
-        log_file = LOGS_DIR / "huesync.log"
+        log_file = LOGS_DIR / "huesignal.log"
         if log_file.exists():
             try:
                 os.startfile(str(log_file))
