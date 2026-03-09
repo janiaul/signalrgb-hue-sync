@@ -11,6 +11,8 @@ effects/HueSync.html
 assets/*
 !assets/.gitkeep
 
+tests/
+
 .history/
 __pycache__/
 *.pyc

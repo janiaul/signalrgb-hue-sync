@@ -39,6 +39,7 @@ class AppConfig:
     entertainment_zone_name: str
     entertainment_id: str = ""
     logging_enabled: bool = False
+    tray_icon: bool = True
 
     # Populated after zone resolution, not from file
     resolved_light_ids: list[str] = field(default_factory=list)
@@ -76,6 +77,7 @@ class AppConfig:
             entertainment_zone_name=parser["hue"]["entertainment_zone_name"].strip(),
             entertainment_id=parser["hue"].get("entertainment_id", "").strip(),
             logging_enabled=parser["general"].getboolean("logging", fallback=False),
+            tray_icon=parser["general"].getboolean("tray_icon", fallback=True),
         )
 
     def save_entertainment_id(self, path: Path = CONFIG_FILE) -> None:

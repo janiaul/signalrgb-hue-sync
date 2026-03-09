@@ -6,7 +6,7 @@ import json
 import logging
 import time
 import threading
-from typing import Callable
+from typing import Callable, Optional
 
 import requests
 import urllib3
@@ -195,18 +195,24 @@ def extract_colors_from_event(
 
 class HueStreamThread(threading.Thread):
     """Background thread that subscribes to the Hue SSE stream and calls
-    *on_colors* whenever new color data arrives."""
+    *on_colors* whenever new color data arrives.
+
+    Optionally calls *on_status* with a string ("connecting", "connected",
+    "reconnecting") so the tray icon can reflect the current state.
+    """
 
     def __init__(
         self,
         cfg: AppConfig,
         on_colors: Callable[[list[Color]], None],
         interrupt: threading.Event,
+        on_status: Optional[Callable[[str], None]] = None,
     ) -> None:
         super().__init__(name="hue-stream", daemon=True)
         self._cfg = cfg
         self._on_colors = on_colors
         self._interrupt = interrupt
+        self._on_status = on_status or (lambda _: None)
 
     def run(self) -> None:
         cfg = self._cfg
@@ -218,6 +224,7 @@ class HueStreamThread(threading.Thread):
             self._interrupt.clear()
             try:
                 logger.info("[hue] Connecting to bridge at %s ...", cfg.bridge_ip)
+                self._on_status("connecting")
                 with requests.get(
                     url,
                     headers=headers,
@@ -227,6 +234,7 @@ class HueStreamThread(threading.Thread):
                 ) as resp:
                     resp.raise_for_status()
                     backoff = _BACKOFF_INITIAL
+                    self._on_status("connected")
                     logger.info("[hue] Connected. Listening for events ...")
 
                     buffer: list[str] = []
@@ -250,6 +258,7 @@ class HueStreamThread(threading.Thread):
                 backoff = _BACKOFF_INITIAL
                 continue
 
+            self._on_status("reconnecting")
             logger.info("[hue] Reconnecting in %ds ...", backoff)
             time.sleep(backoff)
             backoff = min(backoff * 2, _BACKOFF_MAX)
