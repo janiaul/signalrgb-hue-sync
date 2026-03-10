@@ -82,6 +82,7 @@ class TrayIcon:
 
         self._status = StreamStatus.STARTING
         self._lock = threading.Lock()
+        self._ready = False
         self._base_image = self._load_base_image()
 
         self._icon = pystray.Icon(
@@ -102,14 +103,22 @@ class TrayIcon:
 
     def _on_ready(self, icon: pystray.Icon) -> None:
         """Called by pystray once the icon is fully initialised.
-        Must set icon.visible = True or the icon will never appear.
-        Re-applies the current status in case set_status() was called before
-        the Win32 message loop was ready to receive updates."""
-        with self._lock:
-            status = self._status
-        icon.icon = self._render_icon(status)
-        icon.title = self._make_tooltip(status)
+        Makes the icon visible then re-applies current status after a short
+        delay to ensure NIM_ADD has been fully processed by the shell before
+        any NIM_MODIFY updates are sent."""
         icon.visible = True
+        with self._lock:
+            self._ready = True
+            status = self._status
+        # Brief pause lets the shell settle after NIM_ADD before we update
+        threading.Timer(0.5, self._apply_status, args=(status,)).start()
+
+    def _apply_status(self, status: StreamStatus) -> None:
+        """Write the current status to the icon — always reflects latest value."""
+        with self._lock:
+            status = self._status  # re-read in case it changed during the delay
+        self._icon.icon = self._render_icon(status)
+        self._icon.title = self._make_tooltip(status)
 
     def set_status(self, status: StreamStatus) -> None:
         """Update the status dot and tooltip. Safe to call from any thread."""
@@ -117,9 +126,11 @@ class TrayIcon:
             if self._status == status:
                 return
             self._status = status
-        self._icon.icon = self._render_icon(status)
-        self._icon.title = self._make_tooltip(status)
+            ready = self._ready
         logger.info("[tray] Status → %s", status.name)
+        if ready:
+            self._icon.icon = self._render_icon(status)
+            self._icon.title = self._make_tooltip(status)
 
     def stop(self) -> None:
         """Remove the tray icon and unblock run()."""
