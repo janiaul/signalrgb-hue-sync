@@ -104,6 +104,7 @@ class HueSignalApp:
                 on_restart_stream=self._restart_stream,
                 on_exit=self._on_exit,
                 get_latest_colors=lambda: server.latest_colors,
+                on_resume=self._reseed_colors,
             )
             self._tray = tray
 

@@ -75,10 +75,12 @@ class TrayIcon:
         on_restart_stream: Callable[[], None],
         on_exit: Callable[[], None],
         get_latest_colors: Callable[[], list[Color]],
+        on_resume: Callable[[], None] | None = None,
     ) -> None:
         self._on_restart_stream = on_restart_stream
         self._on_exit = on_exit
         self._get_latest_colors = get_latest_colors
+        self._on_resume = on_resume or (lambda: None)
 
         self._status = StreamStatus.STARTING
         self._lock = threading.Lock()
@@ -148,6 +150,8 @@ class TrayIcon:
             self._paused = not self._paused
             paused = self._paused
         logger.info("[tray] Sync %s.", "paused" if paused else "resumed")
+        if not paused:
+            threading.Thread(target=self._on_resume, daemon=True).start()
 
     # ------------------------------------------------------------------
     # Icon rendering
