@@ -22,10 +22,6 @@ logger = logging.getLogger("huesignal")
 _BACKOFF_INITIAL = 3
 _BACKOFF_MAX = 60
 
-# Brightness-only events arriving within this window after a color event for the
-# same light are assumed to be part of the same effect change and skip the fetch.
-_RECENT_COLOR_WINDOW = 5.0  # seconds — suppress brightness fetches after a color event
-
 
 # ---------------------------------------------------------------------------
 # Zone / light resolution
@@ -144,25 +140,15 @@ def extract_colors_from_event(
     data: list,
     watched_ids: set[str],
     cfg: AppConfig,
-    recent_color_ts: dict[str, float] | None = None,
 ) -> tuple[list[Color], list[str]]:
     """Parse SSE event payload into colors and a list of light IDs needing a fetch.
 
     Returns (colors, needs_fetch) where:
     - colors: inline color data extracted directly from the event
-    - needs_fetch: light IDs with brightness-only events that require a REST fetch
-
-    The fetch is not performed here — callers decide whether/when to do it,
-    allowing debouncing to avoid capturing mid-transition state.
-
-    *recent_color_ts* is a mutable dict mapping light_id → timestamp of the
-    last event that carried inline color data. Brightness-only events within
-    _RECENT_COLOR_WINDOW seconds of a color event are suppressed — the color
-    is already known from the preceding event.
+    - needs_fetch: light IDs that were toggled on with no color data yet
     """
     colors: list[Color] = []
     needs_fetch: list[str] = []
-    now = time.monotonic()
 
     for event in data:
         if event.get("type") != "update":
@@ -186,25 +172,15 @@ def extract_colors_from_event(
 
             if event_colors:
                 colors.extend(event_colors)
-                if recent_color_ts is not None:
-                    recent_color_ts[light_id] = now
             else:
-                # Skip if color data arrived recently — effect changes send a
-                # color event followed immediately by a brightness event
-                if recent_color_ts is not None:
-                    age = now - recent_color_ts.get(light_id, 0.0)
-                    if age < _RECENT_COLOR_WINDOW:
-                        continue
+                # No inline color data — brightness change or toggle-on.
+                # Caller decides whether to fetch based on context.
                 reason = (
                     "toggle-on"
                     if ("on" in on_state and on_state["on"])
                     else "brightness change"
                 )
-                logger.info(
-                    "[hue] %s with no color data — scheduling deferred fetch for %s",
-                    reason,
-                    light_id,
-                )
+                logger.debug("[hue] %s with no color data for %s", reason, light_id)
                 needs_fetch.append(light_id)
 
     return colors, needs_fetch
@@ -243,14 +219,12 @@ class HueStreamThread(threading.Thread):
         self._interrupt = interrupt
         self._on_status = on_status or (lambda _: None)
         self._on_reseed = on_reseed or (lambda: None)
-        self._recent_color_ts: dict[str, float] = {}
-        self._fetch_timer: threading.Timer | None = None
-        self._fetch_timer_lock = threading.Lock()
+        self._last_pushed: list[Color] = []
+        self._last_color_event: list[Color] = []
 
     def interrupt(self) -> None:
         """Signal the stream to reconnect at the next bridge event."""
         self._interrupt.set()
-        self._cancel_fetch_timer()
 
     def run(self) -> None:
         cfg = self._cfg
@@ -272,6 +246,8 @@ class HueStreamThread(threading.Thread):
                 ) as resp:
                     resp.raise_for_status()
                     backoff = _BACKOFF_INITIAL
+                    self._last_pushed = []
+                    self._last_color_event = []
                     self._on_status("connected")
                     logger.info("[hue] Connected. Listening for events ...")
                     self._on_reseed()
@@ -301,7 +277,25 @@ class HueStreamThread(threading.Thread):
             time.sleep(backoff)
             backoff = min(backoff * 2, _BACKOFF_MAX)
 
-    _FETCH_DEBOUNCE = 2.0  # seconds to wait after last brightness event before fetching
+    @staticmethod
+    def _colors_match(a: list[Color], b: list[Color], tol: int = 2) -> bool:
+        """Return True if two color lists are identical within per-channel tolerance."""
+        return len(a) == len(b) and all(
+            abs(x["r"] - y["r"]) <= tol
+            and abs(x["g"] - y["g"]) <= tol
+            and abs(x["b"] - y["b"]) <= tol
+            for x, y in zip(a, b)
+        )
+
+    def _push(self, colors: list[Color], label: str = "") -> None:
+        """Push colors to the callback, skipping if nearly identical to last push."""
+        if self._colors_match(colors, self._last_pushed):
+            logger.debug("[hue] Push skipped — colors unchanged.")
+            return
+        self._last_pushed = colors
+        suffix = f" ({label})" if label else ""
+        logger.info("[hue] Push → %s%s", rgb_preview(colors), suffix)
+        self._on_colors(colors)
 
     def _dispatch(self, payload: str, cfg: AppConfig) -> None:
         if self._interrupt.is_set():
@@ -309,44 +303,20 @@ class HueStreamThread(threading.Thread):
         watched = set(cfg.resolved_light_ids)
         try:
             events = json.loads(payload)
-            colors, needs_fetch = extract_colors_from_event(
-                events, watched, cfg, self._recent_color_ts
-            )
+            colors, needs_fetch = extract_colors_from_event(events, watched, cfg)
             if colors:
-                # Real color data — cancel any pending debounced fetch
-                self._cancel_fetch_timer()
-                logger.info("[hue] Push → %s", rgb_preview(colors))
-                self._on_colors(colors)
-            elif needs_fetch:
-                # Brightness-only event during a transition — debounce the fetch
-                # so we wait for the transition to settle before capturing state
-                self._schedule_fetch(needs_fetch, cfg)
+                if self._colors_match(colors, self._last_color_event, tol=1):
+                    logger.info("[hue] Color event skipped — duplicate scene recall.")
+                else:
+                    self._last_color_event = colors
+                    self._push(colors)
+            if needs_fetch and not colors:
+                self._fetch_light_state(needs_fetch, cfg)
         except json.JSONDecodeError as exc:
             logger.warning("[hue] Malformed SSE payload, skipping: %s", exc)
 
-    def _cancel_fetch_timer(self) -> None:
-        with self._fetch_timer_lock:
-            if self._fetch_timer is not None:
-                self._fetch_timer.cancel()
-                self._fetch_timer = None
-
-    def _schedule_fetch(self, light_ids: list[str], cfg: AppConfig) -> None:
-        """Debounce brightness-only fetches — only fire after the transition settles."""
-        with self._fetch_timer_lock:
-            if self._fetch_timer is not None:
-                self._fetch_timer.cancel()
-            self._fetch_timer = threading.Timer(
-                self._FETCH_DEBOUNCE,
-                self._do_fetch,
-                args=(light_ids, cfg),
-            )
-            self._fetch_timer.daemon = True
-            self._fetch_timer.start()
-
-    def _do_fetch(self, light_ids: list[str], cfg: AppConfig) -> None:
-        """Execute the deferred brightness fetch after debounce window."""
-        with self._fetch_timer_lock:
-            self._fetch_timer = None
+    def _fetch_light_state(self, light_ids: list[str], cfg: AppConfig) -> None:
+        """Fetch current color for lights with no inline color data in the event."""
         if self._interrupt.is_set():
             return
         colors: list[Color] = []
@@ -358,8 +328,7 @@ class HueStreamThread(threading.Thread):
                     "[hue] Could not fetch light state for %s: %s", light_id, exc
                 )
         if colors:
-            logger.info("[hue] Push → %s (deferred fetch)", rgb_preview(colors))
-            self._on_colors(colors)
+            self._push(colors, "brightness fetch")
 
 
 # ---------------------------------------------------------------------------
