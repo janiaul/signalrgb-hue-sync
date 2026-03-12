@@ -277,7 +277,12 @@ class HueStreamThread(threading.Thread):
                             self._resp = None
 
             except requests.RequestException as exc:
-                logger.error("[hue] Stream error: %s", exc)
+                if isinstance(exc.__cause__, ConnectionAbortedError) or isinstance(
+                    exc.__context__, ConnectionAbortedError
+                ):
+                    logger.warning("[hue] Connection closed by bridge — reconnecting.")
+                else:
+                    logger.error("[hue] Stream error: %s", exc)
             except Exception:
                 logger.exception("[hue] Unhandled exception in stream thread")
 
