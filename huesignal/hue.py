@@ -221,10 +221,15 @@ class HueStreamThread(threading.Thread):
         self._on_reseed = on_reseed or (lambda: None)
         self._last_pushed: list[Color] = []
         self._last_color_event: list[Color] = []
+        self._resp: Optional[requests.Response] = None
+        self._resp_lock = threading.Lock()
 
     def interrupt(self) -> None:
-        """Signal the stream to reconnect at the next bridge event."""
+        """Signal the stream to reconnect and unblock iter_lines() immediately."""
         self._interrupt.set()
+        with self._resp_lock:
+            if self._resp is not None:
+                self._resp.close()
 
     def run(self) -> None:
         cfg = self._cfg
@@ -244,24 +249,32 @@ class HueStreamThread(threading.Thread):
                     verify=False,
                     timeout=(10, None),
                 ) as resp:
-                    resp.raise_for_status()
-                    backoff = _BACKOFF_INITIAL
-                    self._last_pushed = []
-                    self._last_color_event = []
-                    self._on_status("connected")
-                    logger.info("[hue] Connected. Listening for events ...")
-                    self._on_reseed()
+                    with self._resp_lock:
+                        self._resp = resp
+                    try:
+                        resp.raise_for_status()
+                        backoff = _BACKOFF_INITIAL
+                        self._last_pushed = []
+                        self._last_color_event = []
+                        self._on_status("connected")
+                        logger.info("[hue] Connected. Listening for events ...")
+                        self._on_reseed()
 
-                    buffer: list[str] = []
-                    for raw_line in resp.iter_lines(decode_unicode=True):
-                        if self._interrupt.is_set():
-                            logger.warning("[hue] Stream interrupted — reconnecting.")
-                            break
-                        if raw_line.startswith("data:"):
-                            buffer.append(raw_line[5:].strip())
-                        elif raw_line == "" and buffer:
-                            self._dispatch(" ".join(buffer), cfg)
-                            buffer.clear()
+                        buffer: list[str] = []
+                        for raw_line in resp.iter_lines(decode_unicode=True):
+                            if self._interrupt.is_set():
+                                logger.warning(
+                                    "[hue] Stream interrupted — reconnecting."
+                                )
+                                break
+                            if raw_line.startswith("data:"):
+                                buffer.append(raw_line[5:].strip())
+                            elif raw_line == "" and buffer:
+                                self._dispatch(" ".join(buffer), cfg)
+                                buffer.clear()
+                    finally:
+                        with self._resp_lock:
+                            self._resp = None
 
             except requests.RequestException as exc:
                 logger.error("[hue] Stream error: %s", exc)
