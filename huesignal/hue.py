@@ -277,10 +277,16 @@ class HueStreamThread(threading.Thread):
                             self._resp = None
 
             except requests.RequestException as exc:
-                if isinstance(exc.__cause__, ConnectionAbortedError) or isinstance(
-                    exc.__context__, ConnectionAbortedError
-                ):
-                    logger.warning("[hue] Connection closed by bridge — reconnecting.")
+                cause = exc
+                while cause is not None:
+                    if isinstance(cause, ConnectionAbortedError):
+                        logger.warning(
+                            "[hue] Connection closed by bridge — reconnecting."
+                        )
+                        break
+                    cause = getattr(cause, "__cause__", None) or getattr(
+                        cause, "__context__", None
+                    )
                 else:
                     logger.error("[hue] Stream error: %s", exc)
             except Exception:
