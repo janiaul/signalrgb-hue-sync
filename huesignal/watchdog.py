@@ -58,11 +58,7 @@ class BridgeMonitor(threading.Thread):
         self._on_lost = on_lost
         self._on_restored = on_restored
         self._stop_event = threading.Event()
-        self._wake_event = threading.Event()  # wake early on network change
-
-    def wake(self) -> None:
-        """Wake the monitor immediately (e.g. after a network change event)."""
-        self._wake_event.set()
+        self._wake_event = threading.Event()  # set by stop() to unblock the run() wait
 
     def stop(self) -> None:
         self._stop_event.set()
