@@ -8,9 +8,6 @@ logs/*
 
 effects/HueSignal.html
 
-assets/*
-!assets/.gitkeep
-
 tests/
 
 .history/
