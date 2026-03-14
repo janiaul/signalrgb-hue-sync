@@ -51,7 +51,7 @@ class _FingerprintAdapter(HTTPAdapter):
         kwargs["assert_fingerprint"] = self._fingerprint
         super().init_poolmanager(*args, **kwargs)
 
-    def proxy_manager_for(self, proxy, **proxy_kwargs):
+    def proxy_manager_for(self, proxy, **proxy_kwargs) -> requests.adapters.HTTPAdapter:
         proxy_kwargs["assert_fingerprint"] = self._fingerprint
         return super().proxy_manager_for(proxy, **proxy_kwargs)
 
