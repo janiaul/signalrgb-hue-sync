@@ -310,8 +310,11 @@ def _lerp_color(c1: tuple, c2: tuple, t: float) -> tuple:
 
 
 def _gradient_color(t: float) -> tuple:
-    """Two-stop gradient: electric blue → deep indigo (v5)."""
-    return _lerp_color((0, 71, 255), (59, 0, 204), t)
+    """Three-stop gradient: electric blue -> deep indigo -> hot pink."""
+    if t < 0.4:
+        return _lerp_color((0, 71, 255), (59, 0, 204), t / 0.4)
+    else:
+        return _lerp_color((59, 0, 204), (220, 0, 120), (t - 0.4) / 0.6)
 
 
 def _make_placeholder() -> Image.Image:
@@ -322,13 +325,17 @@ def _make_placeholder() -> Image.Image:
     sq = size - pad * 2
     img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
 
-    # Diagonal two-stop gradient on the square
+    # Diagonal two-stop gradient using horizontal scanlines
     sq_img = Image.new("RGBA", (sq, sq), (0, 0, 0, 0))
-    for y in range(sq):
-        for x in range(sq):
-            t = (x + y) / (sq * 2)
-            r, g, b = _gradient_color(t)
-            sq_img.putpixel((x, y), (r, g, b, 255))
+    draw_sq = ImageDraw.Draw(sq_img)
+    for i in range(sq * 2):
+        t = i / (sq * 2)
+        r, g, b = _gradient_color(t)
+        # Each diagonal band is a line from (i-sq, sq) to (sq, i-sq)
+        x0 = max(0, i - sq)
+        x1 = min(sq, i)
+        if x0 <= x1:
+            draw_sq.line([(x0, i - x0), (x1, i - x1)], fill=(r, g, b, 255))
 
     # Rounder corners - more circular feel
     radius = sq // 5
