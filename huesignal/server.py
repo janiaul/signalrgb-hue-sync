@@ -92,10 +92,13 @@ class ColorServer:
 
     def _broadcast(self, msg: str) -> None:
         with self._clients_lock:
-            dead: set = set()
-            for ws in self._clients:
-                try:
-                    ws.send(msg)
-                except Exception:
-                    dead.add(ws)
-            self._clients.difference_update(dead)
+            snapshot = set(self._clients)
+        dead: set = set()
+        for ws in snapshot:
+            try:
+                ws.send(msg)
+            except Exception:
+                dead.add(ws)
+        if dead:
+            with self._clients_lock:
+                self._clients.difference_update(dead)
