@@ -24,7 +24,7 @@ import pystray
 from PIL import Image, ImageDraw, ImageFont
 
 from .color import Color
-from .config import ASSETS_DIR, CONFIG_FILE, HUESIGNAL_HTML, LOGS_DIR, TRAY_ICON
+from .config import CONFIG_FILE, HUESIGNAL_HTML, LOGS_DIR, ICON_FILE
 
 logger = logging.getLogger("huesignal")
 
@@ -163,15 +163,19 @@ class TrayIcon:
     # ------------------------------------------------------------------
 
     def _load_base_image(self) -> Image.Image:
-        """Load assets/tray.ico if present, otherwise generate a placeholder."""
-        if TRAY_ICON.exists():
+        """Load assets/logo.png if present, otherwise generate a placeholder."""
+        if ICON_FILE.exists():
             try:
-                img = Image.open(TRAY_ICON).convert("RGBA")
-                return img.resize((_ICON_SIZE, _ICON_SIZE), Image.LANCZOS)
+                img = Image.open(ICON_FILE).convert("RGBA")
+                if img.size != (_ICON_SIZE, _ICON_SIZE):
+                    img = img.resize((_ICON_SIZE, _ICON_SIZE), Image.LANCZOS)
+                return img
             except Exception as exc:
                 logger.warning(
-                    "[tray] Could not load %s: %s - using placeholder.", TRAY_ICON, exc
+                    "[tray] Could not load %s: %s - using placeholder.", ICON_FILE, exc
                 )
+        else:
+            logger.debug("[tray] No icon found - using generated placeholder.")
         return _make_placeholder()
 
     def _render_icon(self, status: StreamStatus) -> Image.Image:
@@ -310,7 +314,7 @@ def _lerp_color(c1: tuple, c2: tuple, t: float) -> tuple:
 
 
 def _gradient_color(t: float) -> tuple:
-    """Three-stop gradient: electric blue -> deep indigo -> hot pink."""
+    """Three-stop gradient: electric blue (#0047FF) -> deep indigo (#3B00CC) -> hot pink (#DC0078)."""
     if t < 0.4:
         return _lerp_color((0, 71, 255), (59, 0, 204), t / 0.4)
     else:
