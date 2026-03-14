@@ -14,6 +14,7 @@ Drop a real tray.ico into assets/ and it will be used automatically.
 from __future__ import annotations
 
 import configparser
+import ctypes
 import logging
 import os
 import threading
@@ -332,6 +333,16 @@ class TrayIcon:
         threading.Thread(target=self._on_restart_stream, daemon=True).start()
 
     def _handle_open_log(self, icon: pystray.Icon, item: pystray.MenuItem) -> None:
+        if not self._cached_logging:
+            def _show() -> None:
+                ctypes.windll.user32.MessageBoxW(
+                    0,
+                    "File logging is currently disabled.\n\nEnable it via Settings -> Logging: off.",
+                    "HueSignal",
+                    0x40 | 0x10000,  # MB_ICONINFORMATION | MB_SETFOREGROUND
+                )
+            threading.Thread(target=_show, daemon=True).start()
+            return
         log_file = LOGS_DIR / "huesignal.log"
         if log_file.exists():
             try:
