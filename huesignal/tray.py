@@ -24,7 +24,7 @@ import pystray
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 from .color import Color
-from .config import CONFIG_FILE, HUESIGNAL_HTML, LOGS_DIR, ASSETS_DIR
+from .config import CONFIG_FILE, HUESIGNAL_HTML, LOGS_DIR, ASSETS_DIR, write_config_atomic
 
 logger = logging.getLogger("huesignal")
 
@@ -87,6 +87,14 @@ class TrayIcon:
         self._lock = threading.Lock()
         self._ready = False
         self._paused = False
+
+        # Cached settings - loaded once at startup, updated after each toggle
+        # to avoid a config.ini read on every submenu render.
+        _init_cfg = configparser.ConfigParser()
+        _init_cfg.read(CONFIG_FILE, encoding="utf-8")
+        self._cached_logging: bool = _init_cfg.getboolean("general", "logging", fallback=False)
+        self._cached_tray_icon: bool = _init_cfg.getboolean("general", "tray_icon", fallback=True)
+
         self._base_image = self._load_base_image()
 
         self._icon = pystray.Icon(
@@ -272,17 +280,12 @@ class TrayIcon:
         """Submenu with toggle actions for logging and tray icon."""
 
         def _items():
-            cfg = configparser.ConfigParser()
-            cfg.read(CONFIG_FILE, encoding="utf-8")
-            logging_on = cfg.getboolean("general", "logging", fallback=False)
-            tray_icon_on = cfg.getboolean("general", "tray_icon", fallback=True)
-
             yield pystray.MenuItem(
-                f"Logging: {'on' if logging_on else 'off'}",
+                f"Logging: {'on' if self._cached_logging else 'off'}",
                 self._handle_toggle_logging,
             )
             yield pystray.MenuItem(
-                f"Tray icon: {'on' if tray_icon_on else 'off'}  (restart required)",
+                f"Tray icon: {'on' if self._cached_tray_icon else 'off'}  (restart required)",
                 self._handle_toggle_tray,
             )
 
@@ -306,10 +309,14 @@ class TrayIcon:
         if not cfg.has_section("general"):
             cfg.add_section("general")
         current = cfg.getboolean("general", key, fallback=False)
-        cfg.set("general", key, str(not current).lower())
-        with open(CONFIG_FILE, "w", encoding="utf-8") as fh:
-            cfg.write(fh)
-        logger.info("[tray] Settings: %s -> %s", key, not current)
+        new_val = not current
+        cfg.set("general", key, str(new_val).lower())
+        write_config_atomic(cfg, CONFIG_FILE)
+        if key == "logging":
+            self._cached_logging = new_val
+        elif key == "tray_icon":
+            self._cached_tray_icon = new_val
+        logger.info("[tray] Settings: %s -> %s", key, new_val)
 
     def _handle_open_browser(self, icon: pystray.Icon, item: pystray.MenuItem) -> None:
         try:
