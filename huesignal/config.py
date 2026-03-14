@@ -87,8 +87,18 @@ class AppConfig:
         parser = configparser.ConfigParser()
         parser.read(path, encoding="utf-8")
         parser["hue"]["entertainment_id"] = self.entertainment_id
-        with open(path, "w", encoding="utf-8") as fh:
-            parser.write(fh)
+        write_config_atomic(parser, path)
+
+
+def write_config_atomic(parser: configparser.ConfigParser, path: Path) -> None:
+    """Write *parser* to *path* safely via a sibling temp file, then atomically rename.
+
+    Protects against config corruption if the process is killed mid-write.
+    """
+    tmp = path.parent / (path.name + ".tmp")
+    with open(tmp, "w", encoding="utf-8") as fh:
+        parser.write(fh)
+    tmp.replace(path)
 
 
 def setup_logging(cfg: AppConfig) -> None:
