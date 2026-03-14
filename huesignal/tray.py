@@ -175,7 +175,7 @@ class TrayIcon:
                     "[tray] Could not load %s: %s - using placeholder.", ICON_FILE, exc
                 )
         else:
-            logger.debug("[tray] No icon found - using generated placeholder.")
+            logger.debug("[tray] No tray icon found - using generated placeholder.")
         return _make_placeholder()
 
     def _render_icon(self, status: StreamStatus) -> Image.Image:
@@ -322,7 +322,7 @@ def _gradient_color(t: float) -> tuple:
 
 
 def _make_placeholder() -> Image.Image:
-    """Generate the HueSignal 'HS' lettermark icon - used when no tray.ico is present."""
+    """Generate the HueSignal 'HS' lettermark icon - used when no tray icon is present."""
     size = _ICON_SIZE
     pad = _ICON_PAD
     # Square occupies the padded area, leaving room for dot to overflow the corner
