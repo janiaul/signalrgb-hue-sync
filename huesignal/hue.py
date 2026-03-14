@@ -117,51 +117,67 @@ def resolve_light_ids(cfg: AppConfig) -> list[str]:
     url = f"{base}/clip/v2/resource/entertainment_configuration/{cfg.entertainment_id}"
     config = _get(cfg, url).json().get("data", [{}])[0]
 
-    ent_rids: set[str] = set()
+    seen_ent: set[str] = set()
+    ent_rids: list[str] = []
     for channel in config.get("channels", []):
         for member in channel.get("members", []):
             svc = member.get("service", {})
-            if svc.get("rtype") == "entertainment":
-                ent_rids.add(svc["rid"])
+            if svc.get("rtype") == "entertainment" and svc["rid"] not in seen_ent:
+                seen_ent.add(svc["rid"])
+                ent_rids.append(svc["rid"])
 
     # Entertainment -> device IDs (parallel)
     def _get_device_rid(ent_rid: str) -> str | None:
-        owner = (
-            get_hue_session()
-            .get(
-                f"{base}/clip/v2/resource/entertainment/{ent_rid}",
-                headers=headers,
-                verify=False,
-                timeout=5,
+        try:
+            owner = (
+                get_hue_session()
+                .get(
+                    f"{base}/clip/v2/resource/entertainment/{ent_rid}",
+                    headers=headers,
+                    verify=False,
+                    timeout=5,
+                )
+                .json()
+                .get("data", [{}])[0]
+                .get("owner", {})
             )
-            .json()
-            .get("data", [{}])[0]
-            .get("owner", {})
-        )
-        return owner["rid"] if owner.get("rtype") == "device" else None
+            return owner["rid"] if owner.get("rtype") == "device" else None
+        except Exception as exc:
+            logger.warning(
+                "[hue] Could not resolve device for entertainment %s: %s", ent_rid, exc
+            )
+            return None
 
-    device_rids: set[str] = set()
+    seen_dev: set[str] = set()
+    device_rids: list[str] = []
     if ent_rids:
         with ThreadPoolExecutor(max_workers=min(len(ent_rids), 8)) as pool:
             for rid in pool.map(_get_device_rid, ent_rids):
-                if rid is not None:
-                    device_rids.add(rid)
+                if rid is not None and rid not in seen_dev:
+                    seen_dev.add(rid)
+                    device_rids.append(rid)
 
     # Device -> light IDs (parallel)
     def _get_light_rids(device_rid: str) -> list[str]:
-        services = (
-            get_hue_session()
-            .get(
-                f"{base}/clip/v2/resource/device/{device_rid}",
-                headers=headers,
-                verify=False,
-                timeout=5,
+        try:
+            services = (
+                get_hue_session()
+                .get(
+                    f"{base}/clip/v2/resource/device/{device_rid}",
+                    headers=headers,
+                    verify=False,
+                    timeout=5,
+                )
+                .json()
+                .get("data", [{}])[0]
+                .get("services", [])
             )
-            .json()
-            .get("data", [{}])[0]
-            .get("services", [])
-        )
-        return [svc["rid"] for svc in services if svc.get("rtype") == "light"]
+            return [svc["rid"] for svc in services if svc.get("rtype") == "light"]
+        except Exception as exc:
+            logger.warning(
+                "[hue] Could not resolve lights for device %s: %s", device_rid, exc
+            )
+            return []
 
     light_rids: list[str] = []
     if device_rids:
@@ -191,25 +207,31 @@ def fetch_light_colors(cfg: AppConfig, light_id: str) -> list[Color]:
 def fetch_initial_colors(cfg: AppConfig) -> list[Color]:
     """Fetch current colors for all lights in the zone at startup."""
     if not cfg.resolved_light_ids:
-        return [BLACK]
+        return [BLACK()]
 
     def _fetch_one(light_id: str) -> list[Color]:
-        data = (
-            _get(cfg, f"https://{cfg.bridge_ip}/clip/v2/resource/light/{light_id}")
-            .json()
-            .get("data", [{}])[0]
-        )
-        if not data.get("on", {}).get("on", False):
-            return [BLACK]
-        bri = data.get("dimming", {}).get("brightness", 100.0) / 100.0
-        return _colors_from_light_data(data, bri)
+        try:
+            data = (
+                _get(cfg, f"https://{cfg.bridge_ip}/clip/v2/resource/light/{light_id}")
+                .json()
+                .get("data", [{}])[0]
+            )
+            if not data.get("on", {}).get("on", False):
+                return [BLACK()]
+            bri = data.get("dimming", {}).get("brightness", 100.0) / 100.0
+            return _colors_from_light_data(data, bri)
+        except Exception as exc:
+            logger.warning(
+                "[hue] Could not fetch color for light %s: %s", light_id, exc
+            )
+            return [BLACK()]
 
     colors: list[Color] = []
     with ThreadPoolExecutor(max_workers=min(len(cfg.resolved_light_ids), 8)) as pool:
         for result in pool.map(_fetch_one, cfg.resolved_light_ids):
             colors.extend(result)
 
-    return colors or [BLACK]
+    return colors or [BLACK()]
 
 
 # ---------------------------------------------------------------------------
@@ -245,7 +267,7 @@ def extract_colors_from_event(
 
             # Light turned off
             if "on" in on_state and not on_state["on"]:
-                colors.append(BLACK)
+                colors.append(BLACK())
                 continue
 
             bri = item.get("dimming", {}).get("brightness", 100.0) / 100.0

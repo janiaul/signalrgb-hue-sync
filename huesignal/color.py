@@ -9,7 +9,9 @@ class Color(TypedDict):
     b: int
 
 
-BLACK: Color = {"r": 0, "g": 0, "b": 0}
+def BLACK() -> Color:
+    """Return a new black color dict. Use a factory to prevent accidental mutation."""
+    return {"r": 0, "g": 0, "b": 0}
 
 
 def _clamp(v: float, lo: float = 0.0, hi: float = 1.0) -> float:

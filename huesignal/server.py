@@ -29,7 +29,7 @@ class ColorServer:
         self._sock = Sock(self._app)
         self._clients: set = set()
         self._clients_lock = threading.Lock()
-        self._latest_colors: list[Color] = [BLACK]
+        self._latest_colors: list[Color] = [BLACK()]
         self._colors_lock = threading.RLock()
 
         self._sock.route("/ws")(self._ws_handler)
