@@ -98,7 +98,7 @@ def write_effect_html(wss_url: str = WSS_URL) -> None:
 """
     EFFECTS_DIR.mkdir(parents=True, exist_ok=True)
     HUESIGNAL_HTML.write_text(html, encoding="utf-8")
-    logger.info("[signalrgb] Effect HTML written → %s", HUESIGNAL_HTML)
+    logger.info("[signalrgb] Effect HTML written -> %s", HUESIGNAL_HTML)
 
 
 def ensure_effects_symlink() -> None:
@@ -108,7 +108,7 @@ def ensure_effects_symlink() -> None:
     if not link.exists():
         try:
             link.symlink_to(HUESIGNAL_HTML)
-            logger.info("[signalrgb] Symlink created → %s", link)
+            logger.info("[signalrgb] Symlink created -> %s", link)
         except OSError as exc:
             logger.warning("[signalrgb] Could not create symlink: %s", exc)
 
@@ -168,7 +168,7 @@ def patch_cacert(cacert_path: Path, mkcert_ca_path: Path) -> None:
     bak = cacert_path.with_suffix(".pem.bak")
     if not bak.exists():
         bak.write_bytes(cacert_path.read_bytes())
-        logger.info("[signalrgb] Backup created → %s", bak)
+        logger.info("[signalrgb] Backup created -> %s", bak)
 
     try:
         cacert_path.write_text(existing + "\n" + ca_text, encoding="utf-8")

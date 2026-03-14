@@ -48,7 +48,7 @@ def resolve_light_ids(cfg: AppConfig) -> list[str]:
     headers = _headers(cfg)
     base = f"https://{cfg.bridge_ip}"
 
-    # Zone → entertainment service IDs
+    # Zone -> entertainment service IDs
     url = f"{base}/clip/v2/resource/entertainment_configuration/{cfg.entertainment_id}"
     config = _get(cfg, url).json().get("data", [{}])[0]
 
@@ -59,7 +59,7 @@ def resolve_light_ids(cfg: AppConfig) -> list[str]:
             if svc.get("rtype") == "entertainment":
                 ent_rids.add(svc["rid"])
 
-    # Entertainment → device IDs
+    # Entertainment -> device IDs
     device_rids: set[str] = set()
     for ent_rid in ent_rids:
         owner = (
@@ -76,7 +76,7 @@ def resolve_light_ids(cfg: AppConfig) -> list[str]:
         if owner.get("rtype") == "device":
             device_rids.add(owner["rid"])
 
-    # Device → light IDs
+    # Device -> light IDs
     light_rids: list[str] = []
     for device_rid in device_rids:
         services = (
@@ -322,7 +322,7 @@ class HueStreamThread(threading.Thread):
             return
         self._last_pushed = colors
         suffix = f" ({label})" if label else ""
-        logger.info("[hue] Push → %s%s", rgb_preview(colors), suffix)
+        logger.info("[hue] Push -> %s%s", rgb_preview(colors), suffix)
         self._on_colors(colors)
 
     def _dispatch(self, payload: str, cfg: AppConfig) -> None:

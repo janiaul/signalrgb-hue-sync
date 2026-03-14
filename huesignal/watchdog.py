@@ -1,8 +1,8 @@
 """BridgeMonitor - periodic bridge reachability check.
 
 Pings the Hue bridge every PING_INTERVAL seconds. On state transitions:
-  reachable → unreachable : fires on_lost callback  (toast + tray update)
-  unreachable → reachable : fires on_restored callback (toast + tray update)
+  reachable -> unreachable : fires on_lost callback  (toast + tray update)
+  unreachable -> reachable : fires on_restored callback (toast + tray update)
 
 Owns all toast decisions. The stream thread drives CONNECTING/CONNECTED
 status during reconnect cycles; BridgeMonitor forces RECONNECTING on loss.

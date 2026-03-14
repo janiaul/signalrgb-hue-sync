@@ -130,7 +130,7 @@ class TrayIcon:
                 return
             self._status = status
             ready = self._ready
-        logger.info("[tray] Status → %s", status.name)
+        logger.info("[tray] Status -> %s", status.name)
         if ready:
             self._icon.icon = self._render_icon(status)
             self._icon.title = self._make_tooltip(status)
@@ -269,7 +269,7 @@ class TrayIcon:
         cfg.set("general", key, str(not current).lower())
         with open(CONFIG_FILE, "w", encoding="utf-8") as fh:
             cfg.write(fh)
-        logger.info("[tray] Settings: %s → %s", key, not current)
+        logger.info("[tray] Settings: %s -> %s", key, not current)
 
     def _handle_open_browser(self, icon: pystray.Icon, item: pystray.MenuItem) -> None:
         try:

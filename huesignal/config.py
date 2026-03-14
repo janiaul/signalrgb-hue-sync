@@ -114,4 +114,4 @@ def setup_logging(cfg: AppConfig) -> None:
         fh.setFormatter(fmt)
         fh.setLevel(logging.DEBUG)
         logger.addHandler(fh)
-        logger.info("[config] File logging enabled → %s", log_file)
+        logger.info("[config] File logging enabled -> %s", log_file)
