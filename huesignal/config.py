@@ -20,8 +20,6 @@ HUESIGNAL_HTML = EFFECTS_DIR / "HueSignal.html"
 CERT_FILE = CERTS_DIR / "localhost+1.pem"
 KEY_FILE = CERTS_DIR / "localhost+1-key.pem"
 CONFIG_FILE = BASE_DIR / "config.ini"
-ICON_FILE = ASSETS_DIR / "favicon.ico"
-
 FLASK_PORT = 5123
 WSS_URL = f"wss://127.0.0.1:{FLASK_PORT}/ws"
 
