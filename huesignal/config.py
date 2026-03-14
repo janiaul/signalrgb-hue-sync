@@ -114,7 +114,10 @@ def setup_logging(cfg: AppConfig) -> None:
     """Configure the root huesignal logger based on AppConfig."""
     level = getattr(logging, cfg.log_level, logging.INFO)
     logger.setLevel(level)
-    fmt = logging.Formatter("%(asctime)s %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
+    logger.handlers.clear()
+    fmt = logging.Formatter(
+        "%(asctime)s %(levelname)-8s %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
+    )
 
     stream = logging.StreamHandler()
     stream.setFormatter(fmt)
