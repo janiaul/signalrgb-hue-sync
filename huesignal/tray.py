@@ -25,7 +25,13 @@ import pystray
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 from .color import Color
-from .config import CONFIG_FILE, HUESIGNAL_HTML, LOGS_DIR, ASSETS_DIR, write_config_atomic
+from .config import (
+    CONFIG_FILE,
+    HUESIGNAL_HTML,
+    LOGS_DIR,
+    ASSETS_DIR,
+    write_config_atomic,
+)
 
 logger = logging.getLogger("huesignal")
 
@@ -93,8 +99,12 @@ class TrayIcon:
         # to avoid a config.ini read on every submenu render.
         _init_cfg = configparser.ConfigParser()
         _init_cfg.read(CONFIG_FILE, encoding="utf-8")
-        self._cached_logging: bool = _init_cfg.getboolean("general", "logging", fallback=False)
-        self._cached_tray_icon: bool = _init_cfg.getboolean("general", "tray_icon", fallback=True)
+        self._cached_logging: bool = _init_cfg.getboolean(
+            "general", "logging", fallback=False
+        )
+        self._cached_tray_icon: bool = _init_cfg.getboolean(
+            "general", "tray_icon", fallback=True
+        )
 
         self._base_image = self._load_base_image()
 
@@ -340,6 +350,7 @@ class TrayIcon:
 
     def _handle_open_log(self, icon: pystray.Icon, item: pystray.MenuItem) -> None:
         if not self._cached_logging:
+
             def _show() -> None:
                 ctypes.windll.user32.MessageBoxW(
                     0,
@@ -347,6 +358,7 @@ class TrayIcon:
                     "HueSignal",
                     0x40 | 0x10000,  # MB_ICONINFORMATION | MB_SETFOREGROUND
                 )
+
             threading.Thread(target=_show, daemon=True).start()
             return
         log_file = LOGS_DIR / "huesignal.log"
