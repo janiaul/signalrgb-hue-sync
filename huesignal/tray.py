@@ -8,7 +8,7 @@ CONNECTED    Green dot - SSE stream is live
 RECONNECTING Red dot   - stream lost, retrying
 
 The base icon is generated programmatically so no external .ico is required.
-Drop a real tray.ico into assets/ and it will be used automatically.
+Drop a real icon into assets/ and it will be used automatically.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from enum import Enum, auto
 from typing import Callable
 
 import pystray
-from PIL import Image, ImageDraw, ImageFilter, ImageFont
+from PIL import Image, ImageDraw, ImageFilter
 
 from .color import Color
 from .config import (
@@ -46,7 +46,7 @@ _DOT_CX = (
 )  # dot anchored to bottom-right; larger radius grows left/up
 _LOGO_CORNER_R = round(
     46 / 256 * _LOGO_SIZE
-)  # from SVG rx="46" on 256×256 canvas; used for placeholder
+)  # from SVG rx="46" on 256x256 canvas; used for placeholder
 
 
 class StreamStatus(Enum):
@@ -416,54 +416,93 @@ def _gradient_color(t: float) -> tuple:
 
 
 def _make_placeholder() -> Image.Image:
-    """Generate the HueSignal 'HS' lettermark icon - used when no tray icon is present."""
-    sq = _LOGO_SIZE
-    img = Image.new("RGBA", (sq, sq), (0, 0, 0, 0))
+    """Generate the HueSignal logo icon - used when no tray icon file is present.
 
-    # Diagonal two-stop gradient using horizontal scanlines
-    sq_img = Image.new("RGBA", (sq, sq), (0, 0, 0, 0))
+    Reproduces the assets/logo.svg design. Rendered at 2x then downscaled for clean anti-aliasing.
+    """
+    sq = _LOGO_SIZE
+    rsq = sq * 2  # 2x supersample size
+
+    # --- gradient background ---
+    sq_img = Image.new("RGBA", (rsq, rsq), (0, 0, 0, 0))
     draw_sq = ImageDraw.Draw(sq_img)
-    for i in range(sq * 2):
-        t = i / (sq * 2)
+    for i in range(rsq * 2):
+        t = i / (rsq * 2)
         r, g, b = _gradient_color(t)
-        # Each diagonal band is a line from (i-sq, sq) to (sq, i-sq)
-        x0 = max(0, i - sq)
-        x1 = min(sq, i)
+        x0 = max(0, i - rsq)
+        x1 = min(rsq, i)
         if x0 <= x1:
             draw_sq.line([(x0, i - x0), (x1, i - x1)], fill=(r, g, b, 255))
 
-    radius = _LOGO_CORNER_R
-    mask = Image.new("L", (sq, sq), 0)
+    radius = round(46 / 256 * rsq)
+    mask = Image.new("L", (rsq, rsq), 0)
     ImageDraw.Draw(mask).rounded_rectangle(
-        [0, 0, sq - 1, sq - 1], radius=radius, fill=255
+        [0, 0, rsq - 1, rsq - 1], radius=radius, fill=255
     )
     sq_img.putalpha(mask)
 
+    img = Image.new("RGBA", (rsq, rsq), (0, 0, 0, 0))
     img.paste(sq_img, (0, 0), sq_img)
+
+    # --- icon overlay ---
+    # Transform from SVG path coordinates (24x24 grid) to rsq-pixel space.
+    # SVG: translate(21.703, 21.703) scale(8.858) on a 256x256 canvas.
+    scale = 8.858 * (rsq / 256)
+    tx = 21.703 * (rsq / 256)
+
+    def to_px(x: float, y: float) -> tuple[float, float]:
+        return (x * scale + tx, y * scale + tx)
+
+    stroke_color = (232, 224, 255, 255)  # #E8E0FF
+    sw = max(1, round(2.2 * scale))  # stroke-width="2.2" scaled
 
     d = ImageDraw.Draw(img)
 
-    # Bold font for the lettermark
-    font = None
-    for name in ["segoeuib.ttf", "arialbd.ttf", "calibrib.ttf"]:
-        try:
-            font = ImageFont.truetype(name, int(sq * 0.56))
-            break
-        except (IOError, OSError):
-            continue
-    if font is None:
-        font = ImageFont.load_default()
+    # Pillow draws ellipse outlines *inside* the bounding box (outer edge = bbox).
+    # SVG centers the stroke on the path, so expand the bbox by sw/2 to compensate.
+    half = sw / 2
+    cx, cy = to_px(12, 12)
 
-    text = "HS"
-    bbox = d.textbbox((0, 0), text, font=font)
-    tw = bbox[2] - bbox[0]
-    th = bbox[3] - bbox[1]
-    # Centre within the square
-    tx = (sq - tw) // 2 - bbox[0]
-    ty = (sq - th) // 2 - bbox[1] - max(1, sq // 20)
+    # Outer ring: circle centred at (12,12) radius 11
+    ro = 11 * scale + half
+    d.ellipse(
+        [cx - ro, cy - ro, cx + ro, cy + ro], fill=None, outline=stroke_color, width=sw
+    )
 
-    s = max(1, sq // 32)
-    d.text((tx + s, ty + s * 2), text, font=font, fill=(0, 0, 60, 110))
-    d.text((tx, ty), text, font=font, fill=(240, 245, 255, 255))
+    # Centre dot: circle centred at (12,12) radius 3
+    ri = 3 * scale + half
+    d.ellipse(
+        [cx - ri, cy - ri, cx + ri, cy + ri], fill=None, outline=stroke_color, width=sw
+    )
 
-    return img
+    # Four arcs as cubic bezier curves
+    def _bezier(p0, p1, p2, p3, steps: int = 64) -> list[tuple[float, float]]:
+        pts = []
+        for i in range(steps + 1):
+            t = i / steps
+            mt = 1 - t
+            x = (
+                mt**3 * p0[0]
+                + 3 * mt**2 * t * p1[0]
+                + 3 * mt * t**2 * p2[0]
+                + t**3 * p3[0]
+            )
+            y = (
+                mt**3 * p0[1]
+                + 3 * mt**2 * t * p1[1]
+                + 3 * mt * t**2 * p2[1]
+                + t**3 * p3[1]
+            )
+            pts.append(to_px(x, y))
+        return pts
+
+    for arc in [
+        ((15, 12), (19, 15), (20, 19), (20, 19)),  # M15,12 C19,15 20,19 20,19
+        ((12, 9), (15, 4), (19, 3), (19, 3)),  # M12,9 C15,4 19,3 19,3
+        ((12, 15), (9, 19), (5, 20), (5, 20)),  # M12,15 C9,19 5,20 5,20
+        ((9, 12), (5, 9), (4, 5), (4, 5)),  # M9,12 C5,9 4,5 4,5
+    ]:
+        d.line(_bezier(*arc), fill=stroke_color, width=sw)
+
+    # Downscale to target size with LANCZOS for smooth result
+    return img.resize((sq, sq), Image.LANCZOS)
