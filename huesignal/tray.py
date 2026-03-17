@@ -35,10 +35,11 @@ from .config import (
 
 logger = logging.getLogger("huesignal")
 
-_ICON = ASSETS_DIR / "logo_b.png"
+_ICON = ASSETS_DIR / "logo.png"
 _LOGO_SIZE = 64  # logo rendered at this pixel size
-_DOT_RADIUS = 18  # status indicator radius (px)
-_LOGO_PAD = 6  # padding around the logo on all four sides (set to 0 to fill canvas)
+_DOT_RADIUS = 16  # status indicator radius (px)
+_LOGO_PAD = 4  # padding around the logo on all four sides (set to 0 to fill canvas)
+_DOT_PAD = 4  # transparent gap between the status dot (incl. border) and the logo (px)
 _ICON_SIZE = _LOGO_SIZE + 2 * _LOGO_PAD
 _DOT_CX = (
     _ICON_SIZE - _DOT_RADIUS - 1
@@ -254,6 +255,20 @@ class TrayIcon:
         dot_color = _STATUS_COLORS[status]
         r = _DOT_RADIUS
         cx = cy = _DOT_CX  # dot centre on the 45° point of the logo's rounded corner
+        # Transparent padding ring on the top-left arc only so the dot stays
+        # flush with the bottom-right corner while blending with the logo.
+        if _DOT_PAD > 0:
+            p = r + 1 + _DOT_PAD  # 1 accounts for the border ring
+            erase = Image.new("L", canvas.size, 0)
+            ImageDraw.Draw(erase).ellipse([cx - p, cy - p, cx + p, cy + p], fill=255)
+            # Zero out the bottom-right quadrant so no padding is applied there
+            ImageDraw.Draw(erase).rectangle(
+                [cx, cy, canvas.width - 1, canvas.height - 1], fill=0
+            )
+            cr, cg, cb, ca = canvas.split()
+            new_a = Image.composite(Image.new("L", canvas.size, 0), ca, erase)
+            canvas = Image.merge("RGBA", (cr, cg, cb, new_a))
+            d = ImageDraw.Draw(canvas)
         # Dark border ring for legibility on any taskbar colour
         d.ellipse([cx - r - 1, cy - r - 1, cx + r + 1, cy + r + 1], fill=(0, 0, 0, 200))
         d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=(*dot_color, 255))
