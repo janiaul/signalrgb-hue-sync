@@ -1,24 +1,29 @@
-# HueSignal
+<div align="center">
+  <img src="assets/logo.png" width="80" alt="HueSignal">
 
-A lightweight bridge that mirrors your Philips Hue lighting effects into SignalRGB in real time. Whatever color or gradient your Hue lights are showing, your SignalRGB setup will follow.
+  # HueSignal
 
----
-
-## How it works
-
-HueSignal connects to your Hue bridge's event stream and listens for light changes in a configured entertainment zone. When colors change, it converts them from Hue's CIE xy color space to RGB and pushes them over a local WebSocket to a SignalRGB effect (an HTML canvas file). SignalRGB renders the colors as a gradient across your devices.
+  Mirror your Philips Hue lighting into SignalRGB in real time.
+</div>
 
 ---
+
+HueSignal listens to your Hue bridge's event stream, converts light colors from CIE xy to RGB, and pushes them over a local WebSocket to a SignalRGB HTML effect — rendering your lights as a live gradient across your devices.
+
+## Contents
+
+- [Requirements](#requirements)
+- [Setup](#setup)
+- [System tray](#system-tray)
+- [Notes](#notes)
 
 ## Requirements
 
 - Windows 10+
 - Python 3.10+
-- A Philips Hue Bridge (v2) with at least one entertainment zone configured
+- Philips Hue Bridge v2 with an entertainment zone configured
 - [SignalRGB](https://signalrgb.com/) installed and running
-- [mkcert](https://github.com/FiloSottile/mkcert) — for generating a trusted local SSL certificate
-
----
+- [mkcert](https://github.com/FiloSottile/mkcert) for generating a trusted local SSL certificate
 
 ## Setup
 
@@ -30,83 +35,58 @@ pip install -r requirements.txt
 
 ### 2. Generate a local SSL certificate
 
-SignalRGB requires HTTPS, so you'll need a locally-trusted certificate:
+SignalRGB requires HTTPS:
 
 ```bash
 mkcert 127.0.0.1 localhost
 ```
 
-This produces `localhost+1.pem` and `localhost+1-key.pem`. Place both in the `certs/` folder inside the project directory.
+Place the generated `localhost+1.pem` and `localhost+1-key.pem` in the `certs/` folder.
 
-### 3. Create a `config.ini`
+### 3. Configure
 
-Copy `config.ini.example` to `config.ini` and fill in your details:
+Copy [`config.example.ini`](config.example.ini) to `config.ini` — every option is documented inline. The minimum required fields are:
 
-```ini
-[general]
-logging = false
-tray_icon = true
+| Field | Description |
+|---|---|
+| `bridge_ip` | Local IP of your Hue bridge |
+| `application_key` | From the [Hue API getting started guide](https://developers.meethue.com/develop/get-started-2/) |
+| `entertainment_zone_name` | Exact name of the zone to mirror (case-insensitive) |
 
-[hue]
-bridge_ip = 192.168.x.x
-application_key = your-hue-app-key
-entertainment_zone_name = Your Zone Name
-entertainment_id =
-```
+`entertainment_id` and `bridge_cert_fingerprint` are resolved and cached automatically on first run.
 
-You can leave `entertainment_id` blank — it will be resolved and cached automatically on first run.
+### 4. Run
 
-To get your `application_key`, follow [Philips Hue's API getting started guide](https://developers.meethue.com/develop/get-started-2/).
-
-### 4. Run it
 ```bash
-pythonw -m huesignal
+pythonw -m huesignal   # no console window (normal use)
+python  -m huesignal   # with console (troubleshooting)
 ```
 
-For normal use, `pythonw` runs HueSignal without a console window. If you want a console for troubleshooting:
-```bash
-python -m huesignal
-```
-
-To disable the system tray icon entirely, set `tray_icon = false` in `config.ini`. Press Ctrl+C in the console to stop.
-
-On first run HueSignal will:
-
-- Resolve your entertainment zone and light IDs (cached in `config.ini` for subsequent runs)
-- Patch SignalRGB's `cacert.pem` to trust your local certificate — requires SignalRGB to already be running
-- Write the `HueSignal.html` effect file and symlink it into SignalRGB's effects folder
+On first run HueSignal will resolve zone and light IDs, patch SignalRGB's certificate store, and write the `HueSignal.html` effect file into SignalRGB's effects folder.
 
 ### 5. Load the effect in SignalRGB
 
-Open SignalRGB, go to **Library**, and load **Hue Signal**. Done.
-
----
+Open SignalRGB → **Library** → select **Hue Signal**.
 
 ## System tray
 
-When running with `tray_icon = true`, HueSignal appears in the system tray with a status dot:
+The tray icon shows connection status via a colored dot:
 
-| Colour | Meaning |
-|--------|---------|
-| Grey   | Starting |
-| Amber  | Connecting to bridge |
-| Green  | Connected, stream live |
-| Red    | Reconnecting |
+| Dot | Status |
+|---|---|
+| Grey | Starting |
+| Amber | Connecting to bridge |
+| Green | Connected — stream live |
+| Red | Reconnecting |
 
-Right-clicking the tray icon gives access to:
+Right-click for: color preview (live RGB per light), pause/resume sync, settings (logging and tray icon toggles), restart stream, open log, and exit.
 
-- **Color preview** — shows the current RGB values for each watched light
-- **Settings** — toggle file logging and the tray icon on/off (tray icon change requires restart)
-- **Restart stream** — manually reconnect to the Hue bridge
-- **Open log** — opens `logs/huesignal.log` if logging is enabled
-- **Exit**
-
----
+To run headless without a tray icon, set `tray_icon = false` in `config.ini` and use Ctrl+C in the console to stop.
 
 ## Notes
 
-- The server runs at `wss://127.0.0.1:5123/ws` — everything stays local, nothing goes to the cloud.
-- HueSignal handles Windows sleep/wake events and reconnects the stream automatically after resume.
-- If SignalRGB isn't running when you start HueSignal, the cacert patch is skipped — restart HueSignal once SignalRGB is open.
-- Gradient lights (such as the Hue Play gradient lightstrip) are fully supported and display as a multi-stop gradient in SignalRGB.
-- Only a single entertainment zone is supported by design. Mixing zones produces unpredictable gradient colors.
+- Everything is local — the WebSocket runs at `wss://127.0.0.1:5123/ws`, nothing reaches the cloud.
+- Sleep/wake is handled automatically; the stream reconnects after resume.
+- If SignalRGB isn't running on first launch, the cert patch is skipped — restart HueSignal once SignalRGB is open.
+- Gradient lights (e.g. Hue Play gradient lightstrip) are fully supported and render as a multi-stop gradient.
+- Only one entertainment zone is supported by design; mixing zones produces unpredictable colors.
