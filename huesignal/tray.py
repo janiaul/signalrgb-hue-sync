@@ -35,10 +35,17 @@ from .config import (
 
 logger = logging.getLogger("huesignal")
 
-_ICON = ASSETS_DIR / "tray.ico"
-_ICON_SIZE = 64
-_DOT_RADIUS = 11
-_ICON_PAD = 7  # padding around HS square to leave room for dot
+_ICON = ASSETS_DIR / "logo_b.png"
+_LOGO_SIZE = 64  # logo rendered at this pixel size
+_DOT_RADIUS = 18  # status indicator radius (px)
+_LOGO_PAD = 6  # padding around the logo on all four sides (set to 0 to fill canvas)
+_ICON_SIZE = _LOGO_SIZE + 2 * _LOGO_PAD
+_DOT_CX = (
+    _ICON_SIZE - _DOT_RADIUS - 1
+)  # dot anchored to bottom-right; larger radius grows left/up
+_LOGO_CORNER_R = round(
+    46 / 256 * _LOGO_SIZE
+)  # from SVG rx="46" on 256×256 canvas; used for placeholder
 
 
 class StreamStatus(Enum):
@@ -192,7 +199,7 @@ class TrayIcon:
         if _ICON.exists():
             try:
                 img = Image.open(_ICON)
-                target = (_ICON_SIZE, _ICON_SIZE)
+                target = (_LOGO_SIZE, _LOGO_SIZE)
 
                 if _ICON.suffix.lower() == ".ico":
                     # Use n_frames/seek() - avoids img.ico.sizes whose API
@@ -210,9 +217,9 @@ class TrayIcon:
                         if (w, h) == target:
                             chosen = img.copy()
                             break
-                        if w >= _ICON_SIZE and (cw < _ICON_SIZE or w < cw):
+                        if w >= _LOGO_SIZE and (cw < _LOGO_SIZE or w < cw):
                             chosen = img.copy()
-                        elif cw < _ICON_SIZE and w > cw:
+                        elif cw < _LOGO_SIZE and w > cw:
                             chosen = img.copy()
                     frame = chosen.convert("RGBA")
                     if frame.size != target:
@@ -241,16 +248,16 @@ class TrayIcon:
 
     def _render_icon(self, status: StreamStatus) -> Image.Image:
         """Overlay a coloured status dot centred on the bottom-right corner of the HS square."""
-        img = self._base_image.copy()
-        d = ImageDraw.Draw(img)
+        canvas = Image.new("RGBA", (_ICON_SIZE, _ICON_SIZE), (0, 0, 0, 0))
+        canvas.paste(self._base_image, (_LOGO_PAD, _LOGO_PAD), self._base_image)
+        d = ImageDraw.Draw(canvas)
         dot_color = _STATUS_COLORS[status]
         r = _DOT_RADIUS
-        cx = _ICON_SIZE - r - 2
-        cy = _ICON_SIZE - r - 2
+        cx = cy = _DOT_CX  # dot centre on the 45° point of the logo's rounded corner
         # Dark border ring for legibility on any taskbar colour
         d.ellipse([cx - r - 1, cy - r - 1, cx + r + 1, cy + r + 1], fill=(0, 0, 0, 200))
         d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=(*dot_color, 255))
-        return img
+        return canvas
 
     @staticmethod
     def _make_tooltip(status: StreamStatus) -> str:
@@ -395,11 +402,8 @@ def _gradient_color(t: float) -> tuple:
 
 def _make_placeholder() -> Image.Image:
     """Generate the HueSignal 'HS' lettermark icon - used when no tray icon is present."""
-    size = _ICON_SIZE
-    pad = _ICON_PAD
-    # Square occupies the padded area, leaving room for dot to overflow the corner
-    sq = size - pad * 2
-    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    sq = _LOGO_SIZE
+    img = Image.new("RGBA", (sq, sq), (0, 0, 0, 0))
 
     # Diagonal two-stop gradient using horizontal scanlines
     sq_img = Image.new("RGBA", (sq, sq), (0, 0, 0, 0))
@@ -413,15 +417,14 @@ def _make_placeholder() -> Image.Image:
         if x0 <= x1:
             draw_sq.line([(x0, i - x0), (x1, i - x1)], fill=(r, g, b, 255))
 
-    # Rounder corners - more circular feel
-    radius = sq // 5
+    radius = _LOGO_CORNER_R
     mask = Image.new("L", (sq, sq), 0)
     ImageDraw.Draw(mask).rounded_rectangle(
         [0, 0, sq - 1, sq - 1], radius=radius, fill=255
     )
     sq_img.putalpha(mask)
 
-    img.paste(sq_img, (pad, pad), sq_img)
+    img.paste(sq_img, (0, 0), sq_img)
 
     d = ImageDraw.Draw(img)
 
@@ -441,8 +444,8 @@ def _make_placeholder() -> Image.Image:
     tw = bbox[2] - bbox[0]
     th = bbox[3] - bbox[1]
     # Centre within the square
-    tx = pad + (sq - tw) // 2 - bbox[0]
-    ty = pad + (sq - th) // 2 - bbox[1] - max(1, sq // 20)
+    tx = (sq - tw) // 2 - bbox[0]
+    ty = (sq - th) // 2 - bbox[1] - max(1, sq // 20)
 
     s = max(1, sq // 32)
     d.text((tx + s, ty + s * 2), text, font=font, fill=(0, 0, 60, 110))
