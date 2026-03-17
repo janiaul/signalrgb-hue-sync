@@ -9,6 +9,7 @@ logs/*
 effects/HueSignal.html
 
 tests/
+backup/
 
 .history/
 __pycache__/
