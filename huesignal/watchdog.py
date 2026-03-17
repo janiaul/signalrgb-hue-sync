@@ -29,7 +29,7 @@ PING_INTERVAL = 10  # seconds between reachability checks
 PING_TIMEOUT = 5  # seconds before a ping attempt is considered failed
 
 _APP_ID = "HueSignal"
-_ICON = str(ASSETS_DIR / "toast.png")
+_ICON = str(ASSETS_DIR / "logo.png")
 
 
 def _send_toast(title: str, message: str) -> None:
