@@ -221,7 +221,10 @@ def setup_signalrgb(ca_path: Path) -> None:
 def _prompt_restart() -> bool:
     result = ctypes.windll.user32.MessageBoxW(
         0,
-        "The certificate store was updated and SignalRGB needs to restart.\n\nRestart now?",
+        "HueSignal's CA certificate was added to SignalRGB's certificate store "
+        "so it can trust HueSignal's secure local connection.\n\n"
+        "SignalRGB needs to restart to apply this change.\n\n"
+        "Restart now?",
         "HueSignal - Restart SignalRGB",
         _MB_YESNO | _MB_ICONQUESTION | _MB_SETFOREGROUND,
     )
