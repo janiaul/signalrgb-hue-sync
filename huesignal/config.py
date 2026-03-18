@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import configparser
+import ipaddress
 import logging
 import logging.handlers
 from dataclasses import dataclass, field
@@ -73,8 +74,17 @@ class AppConfig:
                 + "\n".join(f"  • {m}" for m in missing)
             )
 
+        bridge_ip = parser["hue"]["bridge_ip"].strip()
+        try:
+            ipaddress.ip_address(bridge_ip)
+        except ValueError:
+            raise ConfigError(
+                f"[hue] bridge_ip '{bridge_ip}' is not a valid IP address.\n"
+                "Expected an IPv4 or IPv6 address (e.g. 192.168.1.10)."
+            )
+
         return AppConfig(
-            bridge_ip=parser["hue"]["bridge_ip"].strip(),
+            bridge_ip=bridge_ip,
             application_key=parser["hue"]["application_key"].strip(),
             entertainment_zone_name=parser["hue"]["entertainment_zone_name"].strip(),
             entertainment_id=parser["hue"].get("entertainment_id", "").strip(),
