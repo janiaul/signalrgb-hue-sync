@@ -6,3 +6,4 @@ pystray>=0.19
 Pillow>=10.0
 winotify>=1.1
 psutil>=5.9
+cryptography>=42.0
