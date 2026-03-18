@@ -17,8 +17,8 @@ EFFECTS_DIR = BASE_DIR / "effects"
 ASSETS_DIR = BASE_DIR / "assets"
 
 HUESIGNAL_HTML = EFFECTS_DIR / "HueSignal.html"
-CERT_FILE = CERTS_DIR / "localhost+1.pem"
-KEY_FILE = CERTS_DIR / "localhost+1-key.pem"
+CERT_FILE = CERTS_DIR / "huesignal.pem"
+KEY_FILE = CERTS_DIR / "huesignal-key.pem"
 CONFIG_FILE = BASE_DIR / "config.ini"
 FLASK_PORT = 5123
 WSS_URL = f"wss://127.0.0.1:{FLASK_PORT}/ws"
