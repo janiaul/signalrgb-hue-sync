@@ -346,10 +346,18 @@ class HueStreamThread(threading.Thread):
         self._watched_ids: frozenset[str] = frozenset(cfg.resolved_light_ids)
 
     def interrupt(self) -> None:
-        """Signal the stream to reconnect and unblock iter_lines() immediately."""
+        """Signal the stream to reconnect and unblock iter_lines() immediately.
+
+        Sets the interrupt flag then shuts down and closes the response socket.
+        shutdown(SHUT_RDWR) is called before close() because on Windows,
+        closesocket() from a different thread while recv() is blocking in another
+        thread is not guaranteed to unblock the recv() - and can itself block.
+        shutdown() is the cross-thread-safe mechanism for forcing recv() to abort.
+        """
         self._interrupt.set()
         with self._resp_lock:
             if self._resp is not None:
+                _shutdown_response_socket(self._resp)
                 self._resp.close()
 
     def run(self) -> None:
@@ -511,6 +519,48 @@ class HueStreamThread(threading.Thread):
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _shutdown_response_socket(resp: requests.Response) -> None:
+    """Shutdown the underlying socket before closing to guarantee that any
+    blocking recv() on it (in iter_lines() on another thread) is aborted.
+
+    On Windows, closing a socket descriptor while another thread is blocked in
+    recv() on that descriptor can either block or silently fail to interrupt the
+    recv(). Calling shutdown(SHUT_RDWR) first forces an immediate WSAECONNABORTed
+    on all pending I/O operations, making close() safe to call from any thread.
+
+    Two urllib3 internal layouts are tried (pre-2.0 and 2.0+) so this stays
+    compatible across package versions. Failures are silently ignored because
+    the resp.close() that follows will clean up regardless.
+    """
+    try:
+        raw = resp.raw
+        sock = None
+
+        # urllib3 < 2.0: HTTPResponse._connection.sock
+        conn = getattr(raw, "_connection", None)
+        if conn is not None:
+            sock = getattr(conn, "sock", None)
+
+        # urllib3 >= 2.0 / fallback: the socket file object on HTTPResponse.fp
+        if sock is None:
+            fp = getattr(raw, "fp", None)
+            if fp is not None:
+                sock = getattr(fp, "raw", None) or getattr(fp, "_sock", None)
+
+        if sock is None:
+            return
+
+        # ssl.SSLSocket wraps a plain socket in _sock; shutdown must be called
+        # on the underlying socket, not the SSLSocket, to reliably interrupt recv.
+        raw_sock = getattr(sock, "_sock", sock)
+        try:
+            raw_sock.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+    except Exception:
+        pass
 
 
 def _headers(cfg: AppConfig) -> dict[str, str]:
