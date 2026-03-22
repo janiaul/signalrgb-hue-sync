@@ -103,42 +103,44 @@ class PowerMonitor(threading.Thread):
 
 def make_wake_handler(
     cfg: AppConfig,
-    stream_interrupt: threading.Event,
+    interrupt_stream: Callable[[], None],
     on_colors: Callable[[list[Color]], None],
     fetch_colors: Callable[[AppConfig], list[Color]],
 ) -> Callable[[], None]:
     """Return a wake callback that interrupts the SSE stream, waits for the
-    network, re-fetches light state, and re-seeds WebSocket clients."""
+    network, re-fetches light state, and re-seeds WebSocket clients.
+
+    interrupt_stream must call HueStreamThread.interrupt() (not just set the
+    raw threading.Event). The stream thread manages its own interrupt lifecycle
+    (clearing the flag at the top of its reconnect loop), so this handler does
+    not touch the event directly.
+    """
 
     def _handler() -> None:
-        stream_interrupt.set()
+        # Shut down the live SSE socket so iter_lines() is unblocked immediately.
+        # Setting only the threading.Event is not sufficient because iter_lines()
+        # checks it only when the bridge sends a line - which never happens with no
+        # keepalives and no light-change events. The stream thread will reconnect
+        # automatically once the socket is closed.
+        interrupt_stream()
         logger.info("[power] Waiting for network after wake ...")
         deadline = time.monotonic() + _WAKE_NETWORK_TIMEOUT
         attempt = 0
 
-        try:
-            while time.monotonic() < deadline:
-                time.sleep(_WAKE_RETRY_INTERVAL)
-                attempt += 1
-                try:
-                    logger.info(
-                        "[power] Re-fetching light state (attempt %d) ...", attempt
-                    )
-                    colors = fetch_colors(cfg)
-                    on_colors(colors)
-                    logger.info("[power] Colors re-seeded.")
-                    time.sleep(
-                        2
-                    )  # let stream thread reconnect before clearing interrupt
-                    return
-                except Exception as exc:
-                    logger.warning("[power] Network not ready yet: %s", exc)
+        while time.monotonic() < deadline:
+            time.sleep(_WAKE_RETRY_INTERVAL)
+            attempt += 1
+            try:
+                logger.info("[power] Re-fetching light state (attempt %d) ...", attempt)
+                colors = fetch_colors(cfg)
+                on_colors(colors)
+                logger.info("[power] Colors re-seeded.")
+                return
+            except Exception as exc:
+                logger.warning("[power] Network not ready yet: %s", exc)
 
-            logger.warning(
-                "[power] Gave up re-seeding after wake - stream reconnect will recover."
-            )
-        finally:
-            # Always unblock the stream thread, even if re-seeding failed
-            stream_interrupt.clear()
+        logger.warning(
+            "[power] Gave up re-seeding after wake - stream reconnect will recover."
+        )
 
     return _handler
