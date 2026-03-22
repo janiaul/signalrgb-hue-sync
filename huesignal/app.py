@@ -156,7 +156,7 @@ class HueSignalApp:
         # 11. Power monitor thread
         wake_handler = make_wake_handler(
             cfg=cfg,
-            stream_interrupt=self._stream_interrupt,
+            interrupt_stream=lambda: self._stream.interrupt() if self._stream else None,
             on_colors=self._on_colors,
             fetch_colors=fetch_initial_colors,
         )
