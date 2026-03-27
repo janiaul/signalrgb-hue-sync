@@ -2,16 +2,16 @@
 
 from __future__ import annotations
 
-import ctypes
-import ctypes.wintypes
 import logging
 import subprocess
+import threading
 import time
 from pathlib import Path
 
 import psutil
 
 from .config import (
+    ASSETS_DIR,
     EFFECTS_DIR,
     HUESIGNAL_HTML,
     SIGNALRGB_EFFECTS_DIR,
@@ -24,12 +24,6 @@ _SIGNAL_MAIN_PROCESS = "SignalRgb.exe"
 _SIGNAL_LAUNCHER = (
     Path.home() / "AppData" / "Local" / "VortxEngine" / "SignalRgbLauncher.exe"
 )
-
-# Windows MessageBox constants
-_MB_YESNO = 0x00000004
-_MB_ICONQUESTION = 0x00000020
-_MB_SETFOREGROUND = 0x00010000
-_IDYES = 6
 
 
 # ---------------------------------------------------------------------------
@@ -135,7 +129,7 @@ def find_cacert() -> Path | None:
 def patch_cacert(cacert_path: Path, ca_path: Path) -> None:
     """Append HueSignal's CA cert to SignalRGB's cacert.pem if not already present.
 
-    If patched, prompts the user to restart SignalRGB.
+    If patched, restarts SignalRGB automatically and notifies the user via toast.
     """
     try:
         ca_text = ca_path.read_text(encoding="utf-8")
@@ -166,15 +160,18 @@ def patch_cacert(cacert_path: Path, ca_path: Path) -> None:
         tmp.unlink(missing_ok=True)
         return
 
-    if _prompt_restart():
-        _restart_signalrgb()
-        logger.info("[signalrgb] Waiting for SignalRGB to initialise ...")
-        time.sleep(6)
-    else:
-        logger.warning(
-            "[signalrgb] Skipped restart - Hue Sync effect may not work until "
-            "SignalRGB is restarted manually."
-        )
+    _send_toast(
+        "HueSignal \u2014 Restarting SignalRGB",
+        "HueSignal's CA was added to SignalRGB's certificate store. "
+        "Restarting SignalRGB to apply the change...",
+    )
+    _restart_signalrgb()
+    logger.info("[signalrgb] Waiting for SignalRGB to initialise ...")
+    time.sleep(6)
+    _send_toast(
+        "HueSignal \u2014 Ready",
+        "SignalRGB restarted. Effect mirroring is active.",
+    )
 
 
 def _is_safe_cacert_path(path: Path) -> bool:
@@ -214,21 +211,162 @@ def setup_signalrgb(ca_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Process restart
+# Toast helper (used by SignalRGBMonitor)
+# ---------------------------------------------------------------------------
+
+_APP_ID = "HueSignal"
+_ICON = str(ASSETS_DIR / "logo.png")
+
+
+def _send_toast(title: str, message: str) -> None:
+    """Send a Windows toast notification. Fails silently if winotify is unavailable."""
+    try:
+        from winotify import Notification  # type: ignore
+
+        icon = _ICON if Path(_ICON).exists() else ""
+        toast = Notification(app_id=_APP_ID, title=title, msg=message, icon=icon)
+        toast.show()
+    except Exception as exc:
+        logger.debug("[signalrgb] Toast failed: %s", exc)
+
+
+# ---------------------------------------------------------------------------
+# Background monitor - detects SignalRGB updates and re-patches cacert.pem
 # ---------------------------------------------------------------------------
 
 
-def _prompt_restart() -> bool:
-    result = ctypes.windll.user32.MessageBoxW(
-        0,
-        "HueSignal's CA certificate was added to SignalRGB's certificate store "
-        "so it can trust HueSignal's secure local connection.\n\n"
-        "SignalRGB needs to restart to apply this change.\n\n"
-        "Restart now?",
-        "HueSignal - Restart SignalRGB",
-        _MB_YESNO | _MB_ICONQUESTION | _MB_SETFOREGROUND,
-    )
-    return result == _IDYES
+class SignalRGBMonitor(threading.Thread):
+    """Polls cacert.pem and silently re-patches it if our CA was removed.
+
+    This covers the case where SignalRGB updates while HueSignal is already
+    running, overwriting cacert.pem and dropping the HueSignal CA entry.
+
+    On detection:
+      - Re-patches cacert.pem atomically (no user prompt).
+      - Auto-restarts SignalRGB *only* if the process is currently running
+        (i.e. it already loaded the stale cacert).  If the process is not yet
+        running we just patch and let the new instance start cleanly.
+      - Sends toast notifications to keep the user informed.
+    """
+
+    _CHECK_INTERVAL = 30  # seconds between polls
+
+    def __init__(self, ca_path: Path) -> None:
+        super().__init__(name="signalrgb-monitor", daemon=True)
+        self._ca_path = ca_path
+        self._cacert_path: Path | None = None
+        self._stop_event = threading.Event()
+
+    def stop(self) -> None:
+        self._stop_event.set()
+
+    def run(self) -> None:
+        while not self._stop_event.wait(self._CHECK_INTERVAL):
+            try:
+                self._check()
+            except Exception as exc:
+                logger.warning("[signalrgb] Monitor check error: %s", exc)
+
+    def _check(self) -> None:
+        # Re-discover the process path each poll so we handle installs to new locations.
+        running_path = find_cacert()
+        effective_path = running_path or self._cacert_path
+
+        if effective_path is None or not effective_path.exists():
+            return
+
+        # Keep the tracked path current.
+        if running_path is not None:
+            self._cacert_path = running_path
+
+        try:
+            ca_text = self._ca_path.read_text(encoding="utf-8").strip()
+            existing = effective_path.read_text(encoding="utf-8")
+        except OSError:
+            return
+
+        if ca_text in existing:
+            return  # CA present — nothing to do.
+
+        if not _is_safe_cacert_path(effective_path):
+            logger.warning(
+                "[signalrgb] Refusing to auto-patch at unexpected path: %s",
+                effective_path,
+            )
+            return
+
+        logger.info(
+            "[signalrgb] HueSignal CA missing from cacert.pem — "
+            "SignalRGB was likely updated. Re-patching automatically..."
+        )
+        threading.Thread(
+            target=_send_toast,
+            args=(
+                "HueSignal \u2014 SignalRGB Update Detected",
+                "Re-patching certificate store. SignalRGB will restart automatically.",
+            ),
+            daemon=True,
+        ).start()
+
+        # Back up the new (unpatched) cacert if no backup exists yet.
+        bak = effective_path.with_suffix(".pem.bak")
+        if not bak.exists():
+            try:
+                bak.write_bytes(effective_path.read_bytes())
+                logger.info("[signalrgb] Backup created: %s", bak)
+            except OSError as exc:
+                logger.warning("[signalrgb] Could not create backup: %s", exc)
+
+        # Atomic patch.
+        try:
+            ca_text_full = self._ca_path.read_text(encoding="utf-8")
+            existing = effective_path.read_text(encoding="utf-8")
+            tmp = effective_path.with_suffix(".pem.tmp")
+            tmp.write_text(existing + "\n" + ca_text_full, encoding="utf-8")
+            tmp.replace(effective_path)
+            logger.info("[signalrgb] cacert.pem re-patched successfully.")
+        except OSError as exc:
+            logger.error("[signalrgb] Auto re-patch failed: %s", exc)
+            threading.Thread(
+                target=_send_toast,
+                args=(
+                    "HueSignal \u2014 Patch Failed",
+                    "Could not update SignalRGB certificate store. Restart HueSignal to retry.",
+                ),
+                daemon=True,
+            ).start()
+            return
+
+        if running_path is not None:
+            # SignalRGB is running and already loaded the stale cacert — restart it.
+            logger.info(
+                "[signalrgb] Restarting SignalRGB to apply patched certificate store..."
+            )
+            _restart_signalrgb()
+            threading.Thread(
+                target=_send_toast,
+                args=(
+                    "HueSignal \u2014 Done",
+                    "SignalRGB restarted. Effect mirroring is active.",
+                ),
+                daemon=True,
+            ).start()
+        else:
+            # SignalRGB is not running yet (mid-install); the fresh process will
+            # load the already-patched cacert — no restart needed.
+            threading.Thread(
+                target=_send_toast,
+                args=(
+                    "HueSignal \u2014 Certificate Updated",
+                    "SignalRGB certificate store patched. Effect mirroring will be active when SignalRGB starts.",
+                ),
+                daemon=True,
+            ).start()
+
+
+# ---------------------------------------------------------------------------
+# Process restart
+# ---------------------------------------------------------------------------
 
 
 def _restart_signalrgb() -> None:
